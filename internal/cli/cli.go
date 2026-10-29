@@ -44,9 +44,11 @@ type Env struct {
 	CacheDir string
 }
 
-// Forge reads a pull request, running in dir so a bare number resolves against that clone.
+// Forge reads a pull request, running in dir so a bare number resolves against that clone, and
+// lists the open pull requests of a repo.
 type Forge interface {
 	PR(dir string, ref github.Ref) (github.PR, error)
+	OpenPRs(ref github.Ref) ([]github.PR, error)
 }
 
 // usageError is reported with the usage line and exit code 2.
@@ -120,7 +122,9 @@ func parseArgs(args []string, flags map[string]*bool, values map[string]*string)
 // mapChange resolves the target to a commit range and builds the map's signals for it. key names
 // the target in the store: the target itself, or pr-<n> for a pull request in any of its forms.
 func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, key string, err error) {
-	repo, base, head, key, err := resolveTarget(env, target)
+	t, err := resolveTarget(env, target)
+	repo, key = t.repo, t.key
+	base, head := t.base, t.head
 	if err != nil {
 		return repo, mapping.Signals{}, "", err
 	}
@@ -140,7 +144,7 @@ func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, 
 	if err != nil {
 		return repo, mapping.Signals{}, "", err
 	}
-	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files)}), key, nil
+	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t)}), key, nil
 }
 
 func runMap(args []string, env Env) error {
@@ -538,19 +542,19 @@ func ownersOf(repo git.Repo, base string, files []mapping.File) map[string][]str
 // resolveRange turns `<from>..<to>` or `<branch>` into the merge-base and head commits, the diff a PR would show.
 // resolveTarget reads target as a pull request (`482`, `#482`, a URL) or else as a branch range of
 // the clone at env.Dir. repo is the clone the change is read from: env.Dir's, or a cache clone.
-func resolveTarget(env Env, target string) (repo git.Repo, base, head, key string, err error) {
-	repo = git.Repo{Dir: env.Dir}
+func resolveTarget(env Env, target string) (resolved, error) {
+	repo := git.Repo{Dir: env.Dir}
 	inClone := repo.Check()
 	ref, ok := github.ParseRef(target)
 	if !ok {
 		if inClone != nil {
-			return repo, "", "", "", fmt.Errorf("%w: %s", inClone, env.Dir)
+			return resolved{repo: repo}, fmt.Errorf("%w: %s", inClone, env.Dir)
 		}
-		base, head, err = resolveRange(repo, target)
-		return repo, base, head, target, err
+		base, head, err := resolveRange(repo, target)
+		return resolved{repo: repo, base: base, head: head, key: target}, err
 	}
 	if inClone != nil && ref.Owner == "" {
-		return repo, "", "", "", usageError{fmt.Sprintf("PR %d: run lupa inside its clone, or pass the PR's URL", ref.Number)}
+		return resolved{repo: repo}, usageError{fmt.Sprintf("PR %d: run lupa inside its clone, or pass the PR's URL", ref.Number)}
 	}
 	forge := env.Forge
 	if forge == nil {
@@ -558,26 +562,53 @@ func resolveTarget(env Env, target string) (repo git.Repo, base, head, key strin
 	}
 	pr, err := forge.PR(env.Dir, ref)
 	if err != nil {
-		return repo, "", "", "", err
+		return resolved{repo: repo}, err
 	}
-	key = fmt.Sprintf("pr-%d", pr.Ref.Number)
+	key := fmt.Sprintf("pr-%d", pr.Ref.Number)
 	remote := ""
 	if inClone == nil {
 		if remote, err = remoteOf(repo, pr.Ref); err != nil {
-			return repo, "", "", "", err
+			return resolved{repo: repo}, err
 		}
 	}
 	if remote == "" {
 		if ref.Owner == "" {
-			return repo, "", "", "", fmt.Errorf("PR %d is in %s/%s, which no remote of this clone points at", pr.Ref.Number, pr.Ref.Owner, pr.Ref.Repo)
+			return resolved{repo: repo}, fmt.Errorf("PR %d is in %s/%s, which no remote of this clone points at", pr.Ref.Number, pr.Ref.Owner, pr.Ref.Repo)
 		}
 		if repo, err = cacheClone(env, pr.Ref); err != nil {
-			return repo, "", "", "", err
+			return resolved{repo: repo}, err
 		}
 		remote = "origin"
 	}
-	base, head, err = fetchPR(repo, remote, pr)
-	return repo, base, head, key, err
+	base, head, err := fetchPR(repo, remote, pr)
+	return resolved{repo: repo, base: base, head: head, key: key, pr: &pr, forge: forge}, err
+}
+
+// resolved is a target read as a commit range of repo; pr and forge are set for a pull request.
+type resolved struct {
+	repo            git.Repo
+	base, head, key string
+	pr              *github.PR
+	forge           Forge
+}
+
+// prOf gives the map what the forge says about a pull request; nil for a branch range. When the
+// open pull requests cannot be listed, the duplicate rule is skipped with a warning.
+func prOf(env Env, t resolved) *mapping.PR {
+	if t.pr == nil {
+		return nil
+	}
+	pr := &mapping.PR{Number: t.pr.Ref.Number, URL: t.pr.Ref.URL(), Title: t.pr.Title, BaseRef: t.pr.BaseRef, HeadRef: t.pr.HeadRef,
+		Body: t.pr.Body, LinkedIssues: t.pr.LinkedIssues}
+	open, err := t.forge.OpenPRs(t.pr.Ref)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "lupa: open PRs not listed, duplicate check skipped: %v\n", err)
+		return pr
+	}
+	for _, o := range open {
+		pr.Open = append(pr.Open, mapping.OpenPR{Number: o.Ref.Number, Title: o.Title, BaseRef: o.BaseRef, HeadRef: o.HeadRef, Files: o.Files})
+	}
+	return pr
 }
 
 // remoteOf names the remote of repo whose URL points at ref's repo, or "" when none does.

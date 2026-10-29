@@ -71,6 +71,7 @@ type PR struct {
 	Ref          Ref
 	Title, Body  string
 	BaseRef      string
+	HeadRef      string
 	HeadSHA      string
 	LinkedIssues int
 	Files        []string
@@ -82,7 +83,7 @@ type Client struct {
 	Bin string
 }
 
-const prFields = "number,url,title,body,baseRefName,headRefOid,closingIssuesReferences,files"
+const prFields = "number,url,title,body,baseRefName,headRefName,headRefOid,closingIssuesReferences,files"
 
 // PR reads ref, running gh in dir so a bare number resolves against that clone's repo.
 func (c Client) PR(dir string, ref Ref) (PR, error) {
@@ -99,6 +100,7 @@ func (c Client) PR(dir string, ref Ref) (PR, error) {
 		Title       string `json:"title"`
 		Body        string `json:"body"`
 		BaseRefName string `json:"baseRefName"`
+		HeadRefName string `json:"headRefName"`
 		HeadRefOid  string `json:"headRefOid"`
 		Closing     []any  `json:"closingIssuesReferences"`
 		Files       []struct {
@@ -112,11 +114,40 @@ func (c Client) PR(dir string, ref Ref) (PR, error) {
 	if !ok || raw.HeadRefOid == "" || raw.BaseRefName == "" {
 		return PR{}, fmt.Errorf("gh pr view %s: answer lacks the url, base or head", arg)
 	}
-	pr := PR{Ref: got, Title: raw.Title, Body: raw.Body, BaseRef: raw.BaseRefName, HeadSHA: raw.HeadRefOid, LinkedIssues: len(raw.Closing)}
+	pr := PR{Ref: got, Title: raw.Title, Body: raw.Body, BaseRef: raw.BaseRefName, HeadRef: raw.HeadRefName, HeadSHA: raw.HeadRefOid, LinkedIssues: len(raw.Closing)}
 	for _, f := range raw.Files {
 		pr.Files = append(pr.Files, f.Path)
 	}
 	return pr, nil
+}
+
+// OpenPRs lists the open pull requests of ref's repo with their branches and the files each changes.
+func (c Client) OpenPRs(ref Ref) ([]PR, error) {
+	repo := ref.Host + "/" + ref.Owner + "/" + ref.Repo
+	out, err := c.run("", "pr", "list", "-R", repo, "--state", "open", "--limit", "200", "--json", "number,title,baseRefName,headRefName,files")
+	if err != nil {
+		return nil, err
+	}
+	var raw []struct {
+		Number  int    `json:"number"`
+		Title   string `json:"title"`
+		BaseRef string `json:"baseRefName"`
+		HeadRef string `json:"headRefName"`
+		Files   []struct {
+			Path string `json:"path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("gh pr list: unreadable answer: %w", err)
+	}
+	prs := make([]PR, len(raw))
+	for i, r := range raw {
+		prs[i] = PR{Ref: Ref{Host: ref.Host, Owner: ref.Owner, Repo: ref.Repo, Number: r.Number}, Title: r.Title, BaseRef: r.BaseRef, HeadRef: r.HeadRef}
+		for _, f := range r.Files {
+			prs[i].Files = append(prs[i].Files, f.Path)
+		}
+	}
+	return prs, nil
 }
 
 func (c Client) run(dir string, args ...string) ([]byte, error) {

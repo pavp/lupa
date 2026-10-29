@@ -25,7 +25,7 @@ func Markdown(s mapping.Signals) []byte {
 
 	if s.ReviewNow.Decision == mapping.HandBack {
 		fmt.Fprintf(&b, "**Review now? Hand back** — %s\n", s.ReviewNow.Reason)
-		fmt.Fprintf(&b, "Suggested reply: \"This change has %d changed lines without generated files. Could you split it into smaller PRs?\"\n\n", s.Size.Changed)
+		fmt.Fprintf(&b, "Suggested reply: \"%s\"\n\n", s.ReviewNow.Reply)
 	} else {
 		fmt.Fprintf(&b, "**Review now? Yes** — %s\n\n", s.ReviewNow.Reason)
 	}
