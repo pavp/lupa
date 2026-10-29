@@ -15,8 +15,8 @@ import (
 // DefaultBudget is the patch bytes one group may carry into a reviewer prompt.
 const DefaultBudget = 60000
 
-// promptOverhead is the fixed part of every reviewer prompt (rules, rubric, schema), in bytes.
-const promptOverhead = 4000
+// defaultOverhead stands in for the fixed part of a reviewer prompt when Options.Overhead is zero.
+const defaultOverhead = 4000
 
 // Status says what happens to a changed file in the review.
 type Status string
@@ -27,8 +27,9 @@ const (
 	NotReviewed Status = "not-reviewed"
 )
 
-// Options tune the plan; a zero Budget means DefaultBudget.
-type Options struct{ Budget int }
+// Options tune the plan; a zero Budget means DefaultBudget. Overhead is the bytes of a reviewer
+// prompt other than its patch, used by the estimate.
+type Options struct{ Budget, Overhead int }
 
 // Part is a file, or some of its hunks, inside a group. Hunks holds the head-side start lines of
 // the hunks the part carries, and is empty when the part is the whole file.
@@ -111,8 +112,9 @@ func Plan(files []mapping.File, patches map[string]string, opts Options) Result 
 		r.Ledger = append(r.Ledger, left...)
 	}
 	slices.SortStableFunc(r.Ledger, func(a, b Entry) int { return cmp.Compare(a.Path, b.Path) })
+	overhead := cmp.Or(opts.Overhead, defaultOverhead)
 	for _, g := range r.Groups {
-		r.Estimate.Tokens += (g.Bytes + promptOverhead + 3) / 4
+		r.Estimate.Tokens += (g.Bytes + overhead + 3) / 4
 	}
 	if len(r.Groups) > 0 {
 		// One reviewer run per group, plus the filter run over the severe comments.
