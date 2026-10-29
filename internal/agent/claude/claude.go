@@ -62,6 +62,8 @@ func (a Adapter) Run(ctx context.Context, req agent.Request) (agent.Response, er
 		"--setting-sources", "",
 		"--strict-mcp-config",
 		"--no-session-persistence",
+		// --setting-sources "" already keeps the reviewed repo's CLAUDE.md out (verified); safe mode also drops plugins and hooks.
+		"--safe-mode",
 		"--system-prompt", req.SystemPrompt,
 	}
 	if req.Model != "" {

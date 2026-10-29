@@ -44,7 +44,7 @@ func readFile(t *testing.T, path string) string {
 }
 
 func TestRunArguments(t *testing.T) {
-	base := []string{"-p", "--output-format", "json", "--tools", "Read,Grep,Glob", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--system-prompt", "You review code."}
+	base := []string{"-p", "--output-format", "json", "--tools", "Read,Grep,Glob", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--safe-mode", "--system-prompt", "You review code."}
 	tests := []struct {
 		name  string
 		model string

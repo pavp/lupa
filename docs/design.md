@@ -163,7 +163,7 @@ Dependency rules:
 | Read-only tools | `--tools Read,Grep,Glob` | `--tools` allowlist, `--exclude-tools` |
 | Model | `--model` | `--model provider/id`, `--thinking` |
 | Ephemeral | `--no-session-persistence` | `--no-session` |
-| Isolate from user context | `--setting-sources ""`, `--strict-mcp-config`, a replacing `--system-prompt`, prompt on stdin | `--no-context-files`, `--no-extensions`, `--no-skills` |
+| Isolate from user context | `--setting-sources ""` (also keeps the reviewed repo's `CLAUDE.md` out, verified), `--safe-mode`, `--strict-mcp-config`, a replacing `--system-prompt`, prompt on stdin | `--no-context-files`, `--no-extensions`, `--no-skills` |
 
 Never run a reviewer with a permission-bypass mode; the tool allowlist is the boundary. The reviewed tree is a detached worktree at the PR head, never the user's working copy. Each run has a time limit and the prompt a byte budget, so cost is predictable.
 
