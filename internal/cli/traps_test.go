@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -147,8 +148,9 @@ func TestBackendTraps(t *testing.T) {
 			t.Errorf("report lacks %q:\n%s", want, md)
 		}
 	}
-	for _, notTheMapsJob := range []string{"swallow", "idempot", "200"} {
-		if strings.Contains(strings.ToLower(md), notTheMapsJob) {
+	// Whole words only: the report carries commit hashes, and a hash can contain "200".
+	for _, notTheMapsJob := range []string{`\bswallow`, `\bidempot`, `\b200\b`} {
+		if regexp.MustCompile(notTheMapsJob).MatchString(strings.ToLower(md)) {
 			t.Errorf("the map must not judge code (%q); that is the agent review's job", notTheMapsJob)
 		}
 	}
