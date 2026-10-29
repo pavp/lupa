@@ -20,9 +20,32 @@ func sample() mapping.Input {
 		},
 		Reach: mapping.Reach{
 			Importers:  map[string][]string{"src/Badge.ts": {"src/a.ts", "src/b.ts"}},
+			Direct:     map[string][]string{"src/Badge.ts": {"src/a.ts"}},
 			Unresolved: []mapping.Unresolved{{From: "src/Badge.ts", Specifier: "./missing", Line: 2}},
 		},
 		Owners: map[string][]string{"src/Badge.ts": {"@ui"}},
+	}
+}
+
+func TestImpactLine(t *testing.T) {
+	tests := []struct {
+		name   string
+		direct []string
+		want   string
+	}{
+		{"all direct", []string{"src/a.ts", "src/b.ts", "src/c.ts"}, "is imported by 3 files outside this change, directly by `src/a.ts`, `src/b.ts`, `src/c.ts`\n"},
+		{"some direct", []string{"src/a.ts"}, "is imported by 3 files outside this change, directly by `src/a.ts`; 2 more through other imports\n"},
+		{"none direct", nil, "is imported by 3 files outside this change, all through other imports\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			in := sample()
+			in.Reach.Importers = map[string][]string{"src/Badge.ts": {"src/a.ts", "src/b.ts", "src/c.ts"}}
+			in.Reach.Direct = map[string][]string{"src/Badge.ts": tt.direct}
+			if md := string(Markdown(mapping.Build(in))); !strings.Contains(md, "- Impact: `src/Badge.ts` "+tt.want) {
+				t.Errorf("report lacks the impact line %q:\n%s", tt.want, md)
+			}
+		})
 	}
 }
 
@@ -34,7 +57,7 @@ func TestMarkdown(t *testing.T) {
 		"",
 		"**Risk** (worst first)",
 		"- Rollback: one-way door in `db/migrations/001.sql`",
-		"- Impact: `src/Badge.ts` is imported by 2 files outside this change (`src/a.ts`, `src/b.ts`)",
+		"- Impact: `src/Badge.ts` is imported by 2 files outside this change, directly by `src/a.ts`; 1 more through other imports",
 		"- Unresolved imports: `src/Badge.ts` imports `./missing`",
 		"- Verification: 1 test file changed (`src/Badge.test.ts`)",
 		"",

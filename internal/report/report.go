@@ -50,8 +50,8 @@ func Markdown(s mapping.Signals) []byte {
 	}
 	for _, f := range s.Files {
 		if len(f.Importers) > 0 {
-			fmt.Fprintf(&b, "- Impact: `%s` is imported by %d %s outside this change (%s)\n",
-				f.Path, len(f.Importers), plural(len(f.Importers), "file", "files"), codes(f.Importers))
+			fmt.Fprintf(&b, "- Impact: `%s` is imported by %d %s outside this change, %s\n",
+				f.Path, len(f.Importers), plural(len(f.Importers), "file", "files"), directly(f))
 		} else if f.Risk == mapping.Impact {
 			fmt.Fprintf(&b, "- Impact: `%s` (%s)\n", f.Path, f.Reason)
 		}
@@ -121,6 +121,18 @@ func ownersOf(s mapping.Signals, path string) string {
 		}
 	}
 	return ""
+}
+
+// directly names the direct importers and counts the rest, so a barrel's transitive reach stays one short line.
+func directly(f mapping.File) string {
+	rest := len(f.Importers) - len(f.DirectImporters)
+	switch {
+	case len(f.DirectImporters) == 0:
+		return "all through other imports"
+	case rest == 0:
+		return "directly by " + codes(f.DirectImporters)
+	}
+	return fmt.Sprintf("directly by %s; %d more through other imports", codes(f.DirectImporters), rest)
 }
 
 func codes(items []string) string {

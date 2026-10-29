@@ -19,6 +19,8 @@ type File struct {
 	Reason    string `json:"reason"`
 	// Importers are the files outside this change that reach this one through imports, directly or not.
 	Importers []string `json:"importers,omitempty"`
+	// DirectImporters are the Importers that import this file themselves.
+	DirectImporters []string `json:"direct_importers,omitempty"`
 	// Owners come from the base branch's CODEOWNERS, so a change cannot pick its own reviewers.
 	Owners []string `json:"owners,omitempty"`
 }
@@ -31,9 +33,10 @@ type Unresolved struct {
 }
 
 // Reach is what the import graph says about the change: importers outside it per changed file,
-// and the imports of changed files that could not be resolved.
+// those of them that import it directly, and the imports of changed files that could not be resolved.
 type Reach struct {
 	Importers  map[string][]string
+	Direct     map[string][]string
 	Unresolved []Unresolved
 	// Imports are the resolved direct imports of changed files; nil when the language is not analyzed.
 	Imports map[string][]string
@@ -115,6 +118,7 @@ func Build(in Input) Signals {
 		rule := Classify(f.Path)
 		f.Class, f.Risk, f.Reason = rule.Class, rule.Risk, rule.Reason
 		f.Importers = reach.Importers[f.Path]
+		f.DirectImporters = reach.Direct[f.Path]
 		f.Owners = in.Owners[f.Path]
 		if len(f.Importers) > 0 && f.Class == Skim {
 			f.Class, f.Risk = ReadFirst, Impact
