@@ -46,6 +46,29 @@ func (r Repo) run(args ...string) (string, error) {
 	return string(out), nil
 }
 
+// Remotes maps each remote's name to its configured URL, before any insteadOf rewrite.
+func (r Repo) Remotes() (map[string]string, error) {
+	out, err := r.run("config", "--get-regexp", `^remote\..*\.url$`)
+	remotes := map[string]string{}
+	if err != nil {
+		// git config exits 1 when nothing matches: a clone with no remotes.
+		return remotes, nil
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		key, url, ok := strings.Cut(line, " ")
+		if ok {
+			remotes[strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url")] = url
+		}
+	}
+	return remotes, nil
+}
+
+// Fetch fetches refspecs from remote without tags; it never touches the checkout.
+func (r Repo) Fetch(remote string, refspecs ...string) error {
+	_, err := r.run(append([]string{"fetch", "--quiet", "--no-tags", remote}, refspecs...)...)
+	return err
+}
+
 // Check fails with ErrNotRepository when Dir is not inside a git work tree.
 func (r Repo) Check() error {
 	if _, err := r.run("rev-parse", "--git-dir"); err != nil {

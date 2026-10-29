@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/agent/claude"
+	"github.com/pavp/lupa/internal/forge/github"
 	"github.com/pavp/lupa/internal/git"
 	"github.com/pavp/lupa/internal/lang/typescript"
 	"github.com/pavp/lupa/internal/mapping"
@@ -25,16 +27,23 @@ import (
 	"github.com/pavp/lupa/internal/store"
 )
 
-const usage = "usage: lupa map <base>..<head> | <branch> [--json]\n       lupa review <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
-// Env is what a command reads and writes: the working directory, the streams, and the agent,
-// which is the claude adapter when nil.
+// Env is what a command reads and writes: the working directory, the streams, the agent, which
+// is the claude adapter when nil, and the forge.
 type Env struct {
 	Dir    string
 	Stdout io.Writer
 	Stderr io.Writer
 	Stdin  io.Reader
 	Agent  agent.Agent
+	// Forge reads pull requests; the GitHub client through gh when nil.
+	Forge Forge
+}
+
+// Forge reads a pull request, running in dir so a bare number resolves against that clone.
+type Forge interface {
+	PR(dir string, ref github.Ref) (github.PR, error)
 }
 
 // usageError is reported with the usage line and exit code 2.
@@ -105,23 +114,24 @@ func parseArgs(args []string, flags map[string]*bool, values map[string]*string)
 	return target, nil
 }
 
-// mapChange resolves the target to a commit range and builds the map's signals for it.
-func mapChange(env Env, target string) (git.Repo, mapping.Signals, error) {
-	repo := git.Repo{Dir: env.Dir}
+// mapChange resolves the target to a commit range and builds the map's signals for it. key names
+// the target in the store: the target itself, or pr-<n> for a pull request in any of its forms.
+func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, key string, err error) {
+	repo = git.Repo{Dir: env.Dir}
 	if err := repo.Check(); err != nil {
-		return repo, mapping.Signals{}, fmt.Errorf("%w: %s", err, env.Dir)
+		return repo, mapping.Signals{}, "", fmt.Errorf("%w: %s", err, env.Dir)
 	}
-	base, head, err := resolveRange(repo, target)
+	base, head, key, err := resolveTarget(env, repo, target)
 	if err != nil {
-		return repo, mapping.Signals{}, err
+		return repo, mapping.Signals{}, "", err
 	}
 	changes, err := repo.NumStat(base, head)
 	if err != nil {
-		return repo, mapping.Signals{}, err
+		return repo, mapping.Signals{}, "", err
 	}
 	firstLines, err := repo.FirstChangedLines(base, head)
 	if err != nil {
-		return repo, mapping.Signals{}, err
+		return repo, mapping.Signals{}, "", err
 	}
 	files := make([]mapping.File, len(changes))
 	for i, c := range changes {
@@ -129,9 +139,9 @@ func mapChange(env Env, target string) (git.Repo, mapping.Signals, error) {
 	}
 	r, err := reachOf(repo, head, files)
 	if err != nil {
-		return repo, mapping.Signals{}, err
+		return repo, mapping.Signals{}, "", err
 	}
-	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files)}), nil
+	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files)}), key, nil
 }
 
 func runMap(args []string, env Env) error {
@@ -140,7 +150,7 @@ func runMap(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	repo, signals, err := mapChange(env, target)
+	repo, signals, key, err := mapChange(env, target)
 	if err != nil {
 		return err
 	}
@@ -150,14 +160,14 @@ func runMap(args []string, env Env) error {
 		return err
 	}
 	st := store.Store{Root: filepath.Join(gitDir, "lupa")}
-	signals.SinceLastLook = lastLook(repo, st, target, head)
+	signals.SinceLastLook = lastLook(repo, st, key, head)
 	saved, err := json.MarshalIndent(signals, "", "  ")
 	if err != nil {
 		return err
 	}
 	saved = append(saved, '\n')
 	md := report.Markdown(signals)
-	dir, err := st.Save(target, head, saved, md)
+	dir, err := st.Save(key, head, saved, md)
 	if err != nil {
 		return fmt.Errorf("saving the map: %w", err)
 	}
@@ -269,7 +279,7 @@ func runReview(args []string, env Env) error {
 	if agentName != "claude" {
 		return usageError{fmt.Sprintf("unknown agent %q", agentName)}
 	}
-	repo, signals, err := mapChange(env, target)
+	repo, signals, key, err := mapChange(env, target)
 	if err != nil {
 		return err
 	}
@@ -330,7 +340,7 @@ func runReview(args []string, env Env) error {
 		return err
 	}
 	st := store.Store{Root: filepath.Join(gitDir, "lupa")}
-	path, err := st.Put(target, signals.Head, "review.json", saved)
+	path, err := st.Put(key, signals.Head, "review.json", saved)
 	if err != nil {
 		return fmt.Errorf("saving the review: %w", err)
 	}
@@ -338,7 +348,7 @@ func runReview(args []string, env Env) error {
 		_, err = env.Stdout.Write(saved)
 	} else {
 		md := report.Review(report.ReviewInput{Base: signals.Base, Head: signals.Head, Out: out})
-		if _, err := st.Put(target, signals.Head, "review.md", md); err != nil {
+		if _, err := st.Put(key, signals.Head, "review.md", md); err != nil {
 			return fmt.Errorf("saving the review: %w", err)
 		}
 		_, err = fmt.Fprintf(env.Stdout, "\n%s\nSaved: %s\n", md, filepath.Dir(path))
@@ -527,6 +537,54 @@ func ownersOf(repo git.Repo, base string, files []mapping.File) map[string][]str
 }
 
 // resolveRange turns `<from>..<to>` or `<branch>` into the merge-base and head commits, the diff a PR would show.
+// resolveTarget reads target as a pull request (`482`, `#482`, a URL) or else as a branch range.
+func resolveTarget(env Env, repo git.Repo, target string) (base, head, key string, err error) {
+	ref, ok := github.ParseRef(target)
+	if !ok {
+		base, head, err = resolveRange(repo, target)
+		return base, head, target, err
+	}
+	base, head, err = resolvePR(env, repo, ref)
+	return base, head, fmt.Sprintf("pr-%d", ref.Number), err
+}
+
+// resolvePR fetches the PR's head and base branch into refs/lupa/pr/<n>/ from the remote that
+// points at the PR's repo, without touching the checkout; the base is their merge-base, as the PR shows it.
+func resolvePR(env Env, repo git.Repo, ref github.Ref) (base, head string, err error) {
+	forge := env.Forge
+	if forge == nil {
+		forge = github.Client{}
+	}
+	pr, err := forge.PR(repo.Dir, ref)
+	if err != nil {
+		return "", "", err
+	}
+	remotes, err := repo.Remotes()
+	if err != nil {
+		return "", "", err
+	}
+	names := slices.Sorted(maps.Keys(remotes))
+	i := slices.IndexFunc(names, func(n string) bool { return github.SameRepo(remotes[n], pr.Ref) })
+	if i < 0 {
+		return "", "", fmt.Errorf("PR %d is in %s/%s, which no remote of this clone points at", pr.Ref.Number, pr.Ref.Owner, pr.Ref.Repo)
+	}
+	refs := fmt.Sprintf("refs/lupa/pr/%d/", pr.Ref.Number)
+	if err := repo.Fetch(names[i], fmt.Sprintf("+refs/pull/%d/head:%shead", pr.Ref.Number, refs), "+refs/heads/"+pr.BaseRef+":"+refs+"base"); err != nil {
+		return "", "", err
+	}
+	if head, err = repo.Commit(refs + "head"); err != nil {
+		return "", "", err
+	}
+	tip, err := repo.Commit(refs + "base")
+	if err != nil {
+		return "", "", err
+	}
+	if base, err = repo.MergeBase(tip, head); err != nil {
+		return "", "", err
+	}
+	return base, head, nil
+}
+
 func resolveRange(repo git.Repo, target string) (base, head string, err error) {
 	from, to, isRange := strings.Cut(target, "..")
 	if !isRange {

@@ -110,3 +110,23 @@ func TestPRErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestSameRepo(t *testing.T) {
+	ref := Ref{Host: "github.com", Owner: "Acme", Repo: "shop", Number: 1}
+	for _, tt := range []struct {
+		remote string
+		want   bool
+	}{
+		{"https://github.com/acme/shop.git", true},
+		{"https://github.com/acme/shop", true},
+		{"git@github.com:acme/shop.git", true},
+		{"ssh://git@github.com/acme/shop.git", true},
+		{"https://github.com/acme/shop-fork.git", false},
+		{"https://gitlab.com/acme/shop.git", false},
+		{"/tmp/upstream.git", false},
+	} {
+		if got := SameRepo(tt.remote, ref); got != tt.want {
+			t.Errorf("SameRepo(%q) = %v, want %v", tt.remote, got, tt.want)
+		}
+	}
+}
