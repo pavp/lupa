@@ -73,3 +73,97 @@ func TestPatchesSplitPerFile(t *testing.T) {
 		}
 	}
 }
+
+func worktreeRepo(t *testing.T) (repo, rev string) {
+	t.Helper()
+	repo = t.TempDir()
+	gitCmd(t, repo, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, repo, "add", ".")
+	gitCmd(t, repo, "commit", "-q", "-m", "one")
+	rev = gitCmd(t, repo, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("v2\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, repo, "commit", "-q", "-am", "two")
+	if err := os.WriteFile(filepath.Join(repo, "a.txt"), []byte("uncommitted\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return repo, rev
+}
+
+func TestWorktreeChecksOutRevDetachedOutsideTheRepo(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	repo, rev := worktreeRepo(t)
+	head := gitCmd(t, repo, "rev-parse", "HEAD")
+
+	dir, remove, err := Repo{Dir: repo}.Worktree(rev)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = remove() })
+
+	realRepo, _ := filepath.EvalSymlinks(repo)
+	realDir, _ := filepath.EvalSymlinks(dir)
+	if rel, err := filepath.Rel(realRepo, realDir); err != nil || !strings.HasPrefix(rel, "..") {
+		t.Errorf("worktree %s is inside the repo %s", realDir, realRepo)
+	}
+	if got, err := os.ReadFile(filepath.Join(dir, "a.txt")); err != nil || string(got) != "v1\n" {
+		t.Errorf("a.txt in worktree = %q, %v; want the content at rev", got, err)
+	}
+	if got := gitCmd(t, dir, "rev-parse", "HEAD"); got != rev {
+		t.Errorf("worktree HEAD = %s, want %s", got, rev)
+	}
+	if out, err := exec.Command("git", "-C", dir, "symbolic-ref", "-q", "HEAD").Output(); err == nil {
+		t.Errorf("worktree HEAD is on a branch %q, want detached", out)
+	}
+
+	if got := gitCmd(t, repo, "branch", "--show-current"); got != "main" {
+		t.Errorf("main checkout branch = %q, want main", got)
+	}
+	if got := gitCmd(t, repo, "rev-parse", "HEAD"); got != head {
+		t.Errorf("main checkout HEAD = %s, want %s", got, head)
+	}
+	if got, _ := os.ReadFile(filepath.Join(repo, "a.txt")); string(got) != "uncommitted\n" {
+		t.Errorf("uncommitted change lost: a.txt = %q", got)
+	}
+	if got := gitCmd(t, repo, "status", "--porcelain"); got != "M a.txt" {
+		t.Errorf("main checkout status = %q, want only the unstaged edit", got)
+	}
+
+	if err := remove(); err != nil {
+		t.Fatalf("remove: %v", err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Errorf("worktree dir still exists after remove: %v", err)
+	}
+	if list := gitCmd(t, repo, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
+		t.Errorf("worktree still registered after remove:\n%s", list)
+	}
+	if err := remove(); err != nil {
+		t.Errorf("second remove: %v", err)
+	}
+	if left, _ := os.ReadDir(os.TempDir()); len(left) != 0 {
+		t.Errorf("temp dir not cleaned: %v", left)
+	}
+}
+
+func TestWorktreeUnknownRevLeavesNothingBehind(t *testing.T) {
+	tmp := t.TempDir()
+	t.Setenv("TMPDIR", tmp)
+	repo, _ := worktreeRepo(t)
+
+	dir, remove, err := Repo{Dir: repo}.Worktree("no-such-rev")
+	if err == nil {
+		_ = remove()
+		t.Fatalf("Worktree(no-such-rev) = %s, want an error", dir)
+	}
+	if left, _ := os.ReadDir(tmp); len(left) != 0 {
+		t.Errorf("directories left behind: %v", left)
+	}
+	if list := gitCmd(t, repo, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
+		t.Errorf("worktree registered after a failed add:\n%s", list)
+	}
+}
