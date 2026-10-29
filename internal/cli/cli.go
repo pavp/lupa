@@ -329,7 +329,7 @@ func runReview(args []string, env Env) error {
 	if _, err := st.Put(target, signals.Head, "review.md", md); err != nil {
 		return fmt.Errorf("saving the review: %w", err)
 	}
-	_, err = fmt.Fprintf(env.Stdout, "%s\nSaved: %s\n", md, filepath.Dir(path))
+	_, err = fmt.Fprintf(env.Stdout, "\n%s\nSaved: %s\n", md, filepath.Dir(path))
 	return err
 }
 
