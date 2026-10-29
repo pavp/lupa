@@ -228,3 +228,25 @@ func (r Repo) FirstChangedLines(base, head string) (map[string]int, error) {
 	}
 	return lines, nil
 }
+
+// Patches returns the unified diff from base to head per file, keyed by path (the old path for a deletion).
+func (r Repo) Patches(base, head string) (map[string]string, error) {
+	out, err := r.run("-c", "core.quotePath=false", "diff", "--no-renames", "--no-color", "--unified=3", base, head)
+	if err != nil {
+		return nil, err
+	}
+	patches := map[string]string{}
+	for _, p := range strings.SplitAfter(out, "\ndiff --git ") {
+		if !strings.HasPrefix(p, "diff --git ") {
+			p = "diff --git " + p
+		}
+		p = strings.TrimSuffix(p, "diff --git ")
+		// Without renames the header is `diff --git a/<path> b/<path>` with the same path twice, so its
+		// length gives the path even when the path holds spaces.
+		names, _, _ := strings.Cut(strings.TrimPrefix(p, "diff --git "), "\n")
+		if n := (len(names) - 5) / 2; n > 0 {
+			patches[names[2:2+n]] = p
+		}
+	}
+	return patches, nil
+}
