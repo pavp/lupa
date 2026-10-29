@@ -57,6 +57,8 @@ func Classify(p string) Rule {
 		return Rule{Skip, NoRisk, "snapshot"}
 	case dirs["dist"]:
 		return Rule{Skip, NoRisk, "build output"}
+	case dirs["generated"]:
+		return Rule{Skip, NoRisk, "generated code"}
 	case isGenerated(base):
 		return Rule{Skip, NoRisk, "generated code"}
 	case anyOf(dirs, migrateDirs) || strings.HasSuffix(base, ".sql") || strings.HasPrefix(base, "schema."):

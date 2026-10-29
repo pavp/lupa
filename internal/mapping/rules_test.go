@@ -33,6 +33,7 @@ func TestClassify(t *testing.T) {
 		{"src/__snapshots__/Badge.test.tsx.snap", Skip, NoRisk},
 		{"dist/auth.js", Skip, NoRisk},
 		{"api/user.pb.go", Skip, NoRisk},
+		{"db/migrations/generated/002.sql", Skip, NoRisk},
 		{"src/author.ts", Skim, NoRisk},
 		{"src/tokenizer.ts", Skim, NoRisk},
 		{"README.md", Skim, NoRisk},
