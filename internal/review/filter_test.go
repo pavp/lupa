@@ -148,6 +148,7 @@ func TestFilterKeepsAnUnprovenRefutationAsInconclusive(t *testing.T) {
 		{"wrong line", `, "citation": {"file": "src/cart.ts", "line": 7, "quote": "if (!items) {"}`, "not found at"},
 		{"quote not in the file", `, "citation": {"file": "src/cart.ts", "line": 6, "quote": "if (items == null) {"}`, "not found at"},
 		{"unreadable file", `, "citation": {"file": "src/missing.ts", "line": 6, "quote": "if (!items) {"}`, "cannot be read"},
+		{"the flagged line itself", `, "citation": {"file": "src/cart.ts", "line": 11, "quote": "  for (const i of items) sum += i.price * i.qty;"}`, "flagged code itself"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

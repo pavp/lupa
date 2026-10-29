@@ -110,7 +110,7 @@ func Filter(ctx context.Context, in FilterInput) FilterResult {
 		case res.Outcomes[r.ID] != "":
 			res.Notes = append(res.Notes, fmt.Sprintf("ignored duplicate result for id %d", r.ID))
 		default:
-			outcome, cit := checkResult(r, in.Head, &res.Notes)
+			outcome, cit := checkResult(r, in.Findings[r.ID].Finding.Location, in.Head, &res.Notes)
 			res.Outcomes[r.ID] = outcome
 			if outcome == OutcomeRefuted {
 				citations[r.ID] = cit
@@ -139,7 +139,7 @@ func isEligible(id int, findings []Anchored) bool {
 
 // checkResult downgrades a refutation to inconclusive unless its cited quote is in the head
 // file on lines that include the cited line.
-func checkResult(r refuterResult, head func(string) (string, bool), notes *[]string) (string, Citation) {
+func checkResult(r refuterResult, flagged verify.Location, head func(string) (string, bool), notes *[]string) (string, Citation) {
 	switch r.Outcome {
 	case OutcomeCorroborated, OutcomeInconclusive:
 		return r.Outcome, Citation{}
@@ -160,6 +160,11 @@ func checkResult(r refuterResult, head func(string) (string, bool), notes *[]str
 	loc, ok := verify.Locate(c.Quote, c.File, nil, head)
 	if !ok || c.Line < loc.Start || c.Line > loc.End {
 		*notes = append(*notes, fmt.Sprintf("id %d: cited quote not found at %s:%d, kept as inconclusive", r.ID, c.File, c.Line))
+		return OutcomeInconclusive, Citation{}
+	}
+	// Citing the flagged lines only restates the finding; a refutation must point at other code.
+	if flagged.Side == "new" && c.File == flagged.File && loc.Start <= flagged.End && loc.End >= flagged.Start {
+		*notes = append(*notes, fmt.Sprintf("id %d: citation is the flagged code itself, kept as inconclusive", r.ID))
 		return OutcomeInconclusive, Citation{}
 	}
 	return OutcomeRefuted, c
