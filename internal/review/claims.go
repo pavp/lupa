@@ -30,6 +30,9 @@ const (
 	ClaimUnsupported  = "unsupported"
 	ClaimNotJudgeable = "not_judgeable"
 	ClaimNotChecked   = "not_checked"
+	// ClaimMentioned is a claim whose cited line is a comment or documentation: the change says it, the
+	// code may not do it.
+	ClaimMentioned = "mentioned"
 )
 
 // ClaimCheck is the outcome for one sentence: the claim as the model copied it from the sentence and,
@@ -65,15 +68,16 @@ For each numbered sentence of the description below, decide what the diff says a
 
 Output: reply with ONE JSON object and nothing else, with one result per sentence:
 {"results": [{"id": <the sentence's id>, "claim": "<the claim, copied verbatim from the sentence>", "outcome": "supported"|"unsupported"|"not_judgeable", "file": "<path of the cited line>", "quote": "<one added or removed line, copied verbatim without its + or ->"}]}
-Give file and quote only for supported. When the sentence names a file, cite a line of that file. Answer unsupported rather than citing a line that does not show the claim.
+Give file and quote only for supported. When the sentence names a file, cite a line of that file. Prefer a line of code; cite a comment or documentation line only when no code line shows the claim. Answer unsupported rather than citing a line that does not show the claim.
 `
 
 // CheckClaims sends the sentences with the diff to one run per chunk of at most DefaultBudget bytes and
 // keeps each answer only as far as code can check it: the claim must be part of its sentence, and a
 // supported claim must cite an added or removed line of a changed file, of the file the sentence names
-// when it names one; a failed check downgrades the answer to unsupported. Across chunks a sentence is
-// supported when any chunk supports it, unsupported only when every chunk says so, and otherwise not
-// judgeable when a chunk says so; a failed run or a malformed reply leaves its chunk without answers.
+// when it names one; a failed check downgrades the answer to unsupported, and a cited comment or
+// documentation line makes it mentioned. Across chunks a sentence is supported when any chunk supports
+// it, else mentioned when a chunk cites a mention, unsupported only when every chunk says so, and
+// otherwise not judgeable when a chunk says so; a failed run or a malformed reply leaves its chunk without answers.
 func CheckClaims(ctx context.Context, in ClaimsInput) ClaimsResult {
 	var res ClaimsResult
 	for _, s := range in.Sentences {
@@ -107,15 +111,19 @@ func CheckClaims(ctx context.Context, in ClaimsInput) ClaimsResult {
 	return res
 }
 
-// mergeChunks combines one sentence's answers across chunks: the first supported answer, else
-// unsupported when every chunk answered unsupported, else the first not judgeable answer.
+// mergeChunks combines one sentence's answers across chunks: the first supported answer, else the first
+// mention, else unsupported when every chunk answered unsupported, else the first not judgeable answer.
 func mergeChunks(c ClaimCheck, answers [][]ClaimCheck, i int) ClaimCheck {
 	unsupported := 0
-	var notJudgeable *ClaimCheck
+	var notJudgeable, mentioned *ClaimCheck
 	for _, a := range answers {
 		switch a[i].Outcome {
 		case ClaimSupported:
 			return a[i]
+		case ClaimMentioned:
+			if mentioned == nil {
+				mentioned = &a[i]
+			}
 		case ClaimUnsupported:
 			if unsupported++; unsupported == 1 {
 				c.Claim = a[i].Claim
@@ -127,6 +135,8 @@ func mergeChunks(c ClaimCheck, answers [][]ClaimCheck, i int) ClaimCheck {
 		}
 	}
 	switch {
+	case mentioned != nil:
+		return *mentioned
 	case notJudgeable != nil:
 		return *notJudgeable
 	case unsupported == len(answers):
@@ -236,11 +246,21 @@ func checkClaim(c ClaimCheck, claim, outcome, file, quote string, patches map[st
 	for _, l := range verify.ChangedLines(patches[file]) {
 		if l.Text == want || l.Text == strings.TrimSpace(strings.TrimLeft(want, "+-")) {
 			c.Outcome, c.File, c.Side, c.Line, c.Code = ClaimSupported, file, l.Side, l.N, l.Text
+			if isDoc(file) || isComment(l.Text) {
+				c.Outcome = ClaimMentioned
+			}
 			return c
 		}
 	}
 	note(fmt.Sprintf("id %d: quote is not a changed line of %s", id, file))
 	return c
+}
+
+// commentMarks open a comment line in the languages Lupa reads; `*` continues a block comment.
+var commentMarks = []string{"//", "#", "/*", "*", "<!--", "--"}
+
+func isComment(line string) bool {
+	return slices.ContainsFunc(commentMarks, func(m string) bool { return strings.HasPrefix(line, m) })
 }
 
 // namedFiles lists the changed files a sentence names by path or by file name.

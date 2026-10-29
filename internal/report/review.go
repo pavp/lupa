@@ -120,6 +120,8 @@ func claimOutcome(c review.ClaimCheck) string {
 	switch c.Outcome {
 	case review.ClaimSupported:
 		return fmt.Sprintf("supported by `%s` (%s)", at(c.File, c.Line), inlineCode(shorten(Redact(c.Side+c.Code), citedLineLimit)))
+	case review.ClaimMentioned:
+		return fmt.Sprintf("only mentioned in a comment or docs: `%s` (%s)", at(c.File, c.Line), inlineCode(shorten(Redact(c.Side+c.Code), citedLineLimit)))
 	case review.ClaimUnsupported:
 		return "no supporting line in the diff"
 	case review.ClaimNotJudgeable:
