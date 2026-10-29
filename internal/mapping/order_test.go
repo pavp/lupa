@@ -20,7 +20,7 @@ func TestReadingOrder(t *testing.T) {
 		{Path: "src/auth/policy.ts"},
 		{Path: "db/migrations/001.sql"},
 		{Path: "src/session/expiry.test.ts"},
-	})
+	}, Reach{})
 	want := []string{
 		"read-first db/migrations/001.sql",
 		"read-first src/auth/login.test.ts",

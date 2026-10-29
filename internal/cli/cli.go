@@ -9,7 +9,9 @@ import (
 	"strings"
 
 	"github.com/pavp/lupa/internal/git"
+	"github.com/pavp/lupa/internal/lang/typescript"
 	"github.com/pavp/lupa/internal/mapping"
+	"github.com/pavp/lupa/internal/reach"
 )
 
 const usage = "usage: lupa map <base>..<head> | <branch> [--json]"
@@ -87,7 +89,11 @@ func runMap(args []string, env Env) error {
 	for i, c := range changes {
 		files[i] = mapping.File{Path: c.Path, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary}
 	}
-	signals := mapping.Build(base, head, files)
+	r, err := reachOf(repo, head, files)
+	if err != nil {
+		return err
+	}
+	signals := mapping.Build(base, head, files, r)
 
 	if asJSON {
 		enc := json.NewEncoder(env.Stdout)
@@ -97,6 +103,48 @@ func runMap(args []string, env Env) error {
 	_, err = fmt.Fprintf(env.Stdout, "%d files, +%d -%d (%d changed lines)\n",
 		signals.Size.Files, signals.Size.Additions, signals.Size.Deletions, signals.Size.Changed)
 	return err
+}
+
+// reachOf builds the import graph at head and keeps, per changed file, its importers outside the change
+// and the imports of changed files that do not resolve. It reads nothing when no changed file is TS/JS.
+func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach, error) {
+	provider := typescript.Provider{}
+	inChange := map[string]bool{}
+	owned := false
+	for _, f := range changed {
+		inChange[f.Path] = true
+		owned = owned || provider.Owns(f.Path)
+	}
+	if !owned {
+		return mapping.Reach{}, nil
+	}
+	all, err := repo.Files(head)
+	if err != nil {
+		return mapping.Reach{}, err
+	}
+	blobs, err := repo.Reader(head)
+	if err != nil {
+		return mapping.Reach{}, err
+	}
+	defer blobs.Close()
+	g, err := reach.Build(all, blobs.Read, provider)
+	if err != nil {
+		return mapping.Reach{}, fmt.Errorf("reach: %w", err)
+	}
+	out := mapping.Reach{Importers: map[string][]string{}}
+	for _, f := range changed {
+		for _, imp := range g.Importers(f.Path) {
+			if !inChange[imp] {
+				out.Importers[f.Path] = append(out.Importers[f.Path], imp)
+			}
+		}
+	}
+	for _, u := range g.Unresolved {
+		if inChange[u.From] {
+			out.Unresolved = append(out.Unresolved, mapping.Unresolved{From: u.From, Specifier: u.Specifier})
+		}
+	}
+	return out, nil
 }
 
 // resolveRange turns `<from>..<to>` or `<branch>` into the merge-base and head commits, the diff a PR would show.
