@@ -6,18 +6,17 @@ import (
 	"path"
 	"sort"
 	"strings"
+
+	"github.com/pavp/lupa/internal/lang"
 )
 
-// Status says how an import specifier resolved.
-type Status int
+// Status aliases lang.Status so the provider and the core share one set of outcomes.
+type Status = lang.Status
 
 const (
-	// Resolved: the specifier names a source file in the repo.
-	Resolved Status = iota + 1
-	// External: a package or builtin outside the repo.
-	External
-	// Unresolved: the specifier names a repo file (relative path or alias) that does not exist.
-	Unresolved
+	Resolved   = lang.Resolved
+	External   = lang.External
+	Unresolved = lang.Unresolved
 )
 
 var codeExts = []string{".ts", ".tsx", ".js", ".jsx", ".mts", ".cts", ".mjs", ".cjs"}

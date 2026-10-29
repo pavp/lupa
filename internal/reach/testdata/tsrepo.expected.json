@@ -1,0 +1,17 @@
+{
+  "importers": {
+    "packages/ui/src/Badge.tsx": ["apps/web/src/pages/Home.tsx"],
+    "apps/web/src/components/Button.tsx": ["apps/web/src/components/index.ts", "apps/web/src/pages/Home.tsx"],
+    "apps/web/src/lib/date.ts": ["apps/web/src/api/client.ts", "apps/web/src/lib/index.ts", "apps/web/src/pages/Home.tsx"],
+    "apps/web/src/types.ts": ["apps/web/src/pages/Home.tsx"],
+    "apps/web/src/pages/Lazy.tsx": ["apps/web/src/pages/Home.tsx"],
+    "apps/web/src/utils/index.ts": ["apps/web/src/api/client.ts", "apps/web/src/legacy/old.js", "apps/web/src/pages/Home.tsx"],
+    "apps/web/src/orphan.ts": []
+  },
+  "imports": {
+    "apps/web/src/api/client.ts": ["apps/web/src/lib/date.ts", "apps/web/src/utils/index.ts"]
+  },
+  "unresolved": [
+    {"from": "apps/web/src/broken.ts", "specifier": "./missing"}
+  ]
+}
