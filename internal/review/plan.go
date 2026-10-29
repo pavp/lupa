@@ -76,9 +76,9 @@ type Result struct {
 }
 
 // Plan selects the reviewable files and packs their patches, keyed by path, into groups under the byte budget.
-// Files of one directory share a group while they fit, and a group under a quarter of the budget also takes
-// the next directory's, so small changes do not each cost a run. A file over the budget is split by hunks,
-// and only a hunk that alone exceeds the budget is left out.
+// Files of one directory share a group while they fit; directories never share one, since fuller groups
+// were measured to find about half the defects. A file over the budget is split by hunks, and only a hunk
+// that alone exceeds the budget is left out.
 func Plan(files []mapping.File, patches map[string]string, opts Options) Result {
 	budget := cmp.Or(opts.Budget, DefaultBudget)
 	r := Result{Budget: budget, Groups: []Group{}, Ledger: []Entry{}}
@@ -103,7 +103,7 @@ func Plan(files []mapping.File, patches map[string]string, opts Options) Result 
 		reviewed := Entry{Path: f.Path, Status: Reviewed}
 		for _, p := range parts {
 			n := len(r.Groups)
-			if n == 0 || path.Dir(f.Path) != dir && r.Groups[n-1].Bytes >= budget/4 || r.Groups[n-1].Bytes+p.Bytes > budget {
+			if n == 0 || path.Dir(f.Path) != dir || r.Groups[n-1].Bytes+p.Bytes > budget {
 				r.Groups = append(r.Groups, Group{ID: n + 1, Parts: []Part{}})
 				n++
 			}

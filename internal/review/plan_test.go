@@ -65,20 +65,12 @@ func TestPlan(t *testing.T) {
 			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "a/y.go", Status: Reviewed, Groups: []int{2}}},
 		},
 		{
-			name:    "a directory change closes a group holding a quarter of the budget",
+			name:    "different directories get separate groups, however small",
 			files:   []mapping.File{file("b/y.go"), file("a/x.go")},
-			patches: map[string]string{"a/x.go": hunk(1, 250), "b/y.go": hunk(1, 20)},
+			patches: map[string]string{"a/x.go": hunk(1, 20), "b/y.go": hunk(1, 20)},
 			budget:  1000,
 			groups:  []string{"1:a/x.go", "2:b/y.go"},
 			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "b/y.go", Status: Reviewed, Groups: []int{2}}},
-		},
-		{
-			name:    "a small group takes the next directory",
-			files:   []mapping.File{file("b/y.go"), file("a/x.go")},
-			patches: map[string]string{"a/x.go": hunk(1, 249), "b/y.go": hunk(1, 20)},
-			budget:  1000,
-			groups:  []string{"1:a/x.go|b/y.go"},
-			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "b/y.go", Status: Reviewed, Groups: []int{1}}},
 		},
 		{
 			name:    "a file over the budget is split by hunks",
