@@ -31,6 +31,12 @@ func filterInput(fake *agent.Fake, findings ...Anchored) FilterInput {
 		Dir:      "/tmp/worktree",
 		Timeout:  2 * time.Minute,
 		Findings: findings,
+		Head: func(path string) (string, bool) {
+			if path == "src/cart.ts" {
+				return cartHead, true
+			}
+			return "", false
+		},
 	}
 }
 
@@ -110,24 +116,54 @@ func TestFilterSendsOnlyImportantFindingsInOneCall(t *testing.T) {
 	}
 }
 
-func TestFilterDoesNotApplyARefutationYet(t *testing.T) {
+func TestFilterRemovesAFindingRefutedWithAValidCitation(t *testing.T) {
 	fake := replying("```json\n" + `{"results": [{"id": 1, "outcome": "refuted", "citation": {"file": "src/cart.ts", "line": 6, "quote": "if (!items) {"}}]}` + "\n```")
 	res := Filter(context.Background(), filterInput(fake,
-		leveled(verify.LevelImportant, "first claim"),
+		leveled(verify.LevelImportant, "kept claim"),
 		leveled(verify.LevelImportant, "refuted claim"),
 	))
 
-	if got := strings.Join(claims(res.Kept), ","); got != "first claim,refuted claim" {
-		t.Errorf("kept = %q, want both findings", got)
+	if got := strings.Join(claims(res.Kept), ","); got != "kept claim" {
+		t.Errorf("kept = %q, want only the unrefuted finding", got)
 	}
-	if len(res.Refuted) != 0 {
-		t.Errorf("refuted = %v, want none", res.Refuted)
+	if len(res.Refuted) != 1 {
+		t.Fatalf("refuted = %v, want one", res.Refuted)
 	}
-	if res.Outcomes[1] != OutcomeInconclusive || res.Outcomes[0] != OutcomeInconclusive {
-		t.Errorf("outcomes = %v, want both inconclusive", res.Outcomes)
+	r := res.Refuted[0]
+	if r.Finding.Finding.Comment.Claim != "refuted claim" || r.Citation != (Citation{File: "src/cart.ts", Line: 6, Quote: "if (!items) {"}) {
+		t.Errorf("refuted = %+v, want the refuted claim with its citation", r)
 	}
-	if !strings.Contains(strings.Join(res.Notes, "\n"), "refutation not applied: citations are not verified yet") {
-		t.Errorf("notes = %q, want the refutation-not-applied note", res.Notes)
+	if res.Outcomes[1] != OutcomeRefuted || res.Outcomes[0] != OutcomeInconclusive {
+		t.Errorf("outcomes = %v, want 0 inconclusive (no result) and 1 refuted", res.Outcomes)
+	}
+}
+
+func TestFilterKeepsAnUnprovenRefutationAsInconclusive(t *testing.T) {
+	tests := []struct {
+		name     string
+		citation string
+		note     string
+	}{
+		{"no citation", "", "no citation"},
+		{"wrong line", `, "citation": {"file": "src/cart.ts", "line": 7, "quote": "if (!items) {"}`, "not found at"},
+		{"quote not in the file", `, "citation": {"file": "src/cart.ts", "line": 6, "quote": "if (items == null) {"}`, "not found at"},
+		{"unreadable file", `, "citation": {"file": "src/missing.ts", "line": 6, "quote": "if (!items) {"}`, "cannot be read"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fake := replying(`{"results": [{"id": 0, "outcome": "refuted"` + tt.citation + `}]}`)
+			res := Filter(context.Background(), filterInput(fake, leveled(verify.LevelImportant, "claim")))
+
+			if len(res.Kept) != 1 || len(res.Refuted) != 0 {
+				t.Fatalf("kept = %d, refuted = %v, want the finding kept", len(res.Kept), res.Refuted)
+			}
+			if res.Outcomes[0] != OutcomeInconclusive {
+				t.Errorf("outcome = %q, want inconclusive", res.Outcomes[0])
+			}
+			if !strings.Contains(strings.Join(res.Notes, "\n"), tt.note) {
+				t.Errorf("notes = %q, want one containing %q", res.Notes, tt.note)
+			}
+		})
 	}
 }
 
