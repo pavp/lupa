@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -335,13 +336,30 @@ func TestReviewJSONRedacts(t *testing.T) {
 	out := review.RunOutput{
 		Findings: []review.Anchored{a},
 		Refuted:  []review.RefutedFinding{{Finding: a, Citation: review.Citation{File: "a.go", Line: 2, Quote: "key " + secret}}},
-		Dropped:  []review.Drop{{Stage: review.StageAnchor, Comment: c}},
+		Dropped:  []review.Drop{{Stage: review.StageAnchor, Comment: c, Reason: "relocation failed: " + secret}},
+		Ledger:   []review.Entry{{Path: "b.go", Status: review.NotReviewed, Reason: "agent run failed: " + secret}},
+		Notes:    []string{"filter run failed: " + secret},
 	}
 	b, err := json.Marshal(reviewJSONOf("b", "h", out))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s := string(b); strings.Contains(s, "ghp_aaa") || strings.Contains(s, "hunter2") || !strings.Contains(s, `password = \"‹redacted›\"`) {
+	if s := string(b); strings.Contains(s, "ghp_aaa") || strings.Contains(s, "hunter2") || !strings.Contains(s, `password = \"‹redacted›\"`) ||
+		!strings.Contains(s, `"notes":["filter run failed: ‹redacted›"]`) {
 		t.Errorf("JSON not redacted: %s", s)
+	}
+}
+
+func TestReviewRunExitsOneWhenNoGroupIsReviewed(t *testing.T) {
+	dir, _, _ := newRunRepo(t)
+	failing := &agent.Fake{Reply: func(agent.Request) (string, error) { return "", errors.New("exit status 1") }}
+	code, stdout, stderr := lupaRun(dir, "", failing, "review", "feature", "--yes", "--json")
+
+	if code != 1 || !strings.Contains(stderr, "no group was reviewed") {
+		t.Fatalf("exit %d, stderr %q, want 1 and a message that no group was reviewed", code, stderr)
+	}
+	var got reviewOut
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil || !strings.Contains(stdout, `"status": "not-reviewed"`) {
+		t.Errorf("stdout is not the saved review with not-reviewed entries: %v\n%s", err, stdout)
 	}
 }

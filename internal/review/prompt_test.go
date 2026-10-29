@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -146,5 +147,23 @@ func TestBuildPromptIsDeterministic(t *testing.T) {
 	}
 	if pa.User == "" {
 		t.Errorf("empty prompt")
+	}
+}
+
+func TestBuildPromptBoundsTheImporterHints(t *testing.T) {
+	var many []string
+	for i := range 500 {
+		many = append(many, fmt.Sprintf("src/features/feature-%03d/index.ts", i))
+	}
+	in := promptInput()
+	in.Importers = map[string][]string{in.Paths[0]: many}
+	user := BuildPrompt(in).User
+	start := strings.Index(user, "is imported by: ")
+	end := strings.Index(user[start:], "LUPA-DATA hints ")
+	if start < 0 || end < 0 || end > hintLimit+len("[truncated]\n")+len(in.Paths[0])+len(" is imported by: ") {
+		t.Fatalf("hints block is %d bytes, want at most about %d", end, hintLimit)
+	}
+	if !strings.Contains(user[start:start+end], "[truncated]") {
+		t.Error("truncated hints do not say so")
 	}
 }
