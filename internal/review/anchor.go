@@ -97,6 +97,7 @@ func relocate(ctx context.Context, in AnchorInput, c verify.Comment) (quote, rea
 		SystemPrompt: relocateSystem,
 		Prompt:       relocatePrompt(c, in.Patches[c.File]),
 		Timeout:      in.Timeout,
+		Schema:       relocateSchema,
 	})
 	if err != nil {
 		return "", "relocation failed: " + err.Error()

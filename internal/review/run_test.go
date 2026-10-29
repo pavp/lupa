@@ -209,7 +209,7 @@ func TestRunMarksAFailedGroupNotReviewedAndGoesOn(t *testing.T) {
 		reason string
 	}{
 		{name: "agent error", err: errors.New("exit status 1"), reason: "agent run failed: exit status 1"},
-		{name: "unusable reply", reply: "looks fine to me", reason: "reviewer output unusable: "},
+		{name: "unusable reply", reply: "looks fine to me", reason: "reviewer output unusable after one retry: "},
 		{name: "uninspected file", reply: answer([]string{}), reason: "the reviewer did not report inspecting it"},
 	}
 	for _, tt := range tests {
@@ -236,13 +236,71 @@ func TestRunMarksAFailedGroupNotReviewedAndGoesOn(t *testing.T) {
 			if got := paths(out.Findings); !reflect.DeepEqual(got, []string{"src/cart.ts"}) {
 				t.Errorf("findings = %v, want the cart finding of group 2", got)
 			}
-			if out.Usage.Calls != 2 {
-				t.Errorf("usage calls = %d, want 2 (the failed run counts)", out.Usage.Calls)
+			calls := 2
+			if tt.name == "unusable reply" {
+				calls = 3
+			}
+			if out.Usage.Calls != calls {
+				t.Errorf("usage calls = %d, want %d (failed runs count)", out.Usage.Calls, calls)
 			}
 			if plan.Ledger[1].Status != Reviewed {
 				t.Errorf("the plan's ledger was modified: %+v", plan.Ledger)
 			}
 		})
+	}
+}
+
+func TestRunRetriesAnUnusableAnswerOnce(t *testing.T) {
+	plan := runPlan(Options{})
+	taxRuns := 0
+	f := &fakeRun{review: func(prompt string) (string, error) {
+		if group(prompt, "lib/tax.ts") {
+			taxRuns++
+			if taxRuns == 1 {
+				return "I checked the callers. " + answer([]string{"lib/tax.ts"}), nil
+			}
+			return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "warning", "rate may be undefined", taxQuote, false)), nil
+		}
+		return answer([]string{"src/cart.ts"}), nil
+	}}
+	out := Run(context.Background(), f.input(plan))
+
+	if taxRuns != 2 {
+		t.Fatalf("tax group ran %d times, want 2 (one retry)", taxRuns)
+	}
+	if tax := ledgerEntry(t, out.Ledger, "lib/tax.ts"); tax.Status != Reviewed {
+		t.Errorf("tax entry = %+v, want reviewed after the retry", tax)
+	}
+	if got := paths(out.Findings); !reflect.DeepEqual(got, []string{"lib/tax.ts"}) {
+		t.Errorf("findings = %v, want the retried answer's finding", got)
+	}
+	if out.Usage.Calls != 3 {
+		t.Errorf("usage calls = %d, want 3", out.Usage.Calls)
+	}
+}
+
+func TestRunAsksEveryRunForItsAnswerSchema(t *testing.T) {
+	plan := runPlan(Options{})
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "severe", "rate may be undefined", "  return amount * rates;", false)), nil
+			}
+			return answer([]string{"src/cart.ts"}), nil
+		},
+		relocate: `{"quote": "  return amount * rate;"}`,
+		refute:   `{"results": [{"id": 0, "outcome": "corroborated"}]}`,
+	}
+	Run(context.Background(), f.input(plan))
+
+	want := map[string]string{systemPrompt: reviewSchema, relocateSystem: relocateSchema, filterSystem: filterSchema}
+	for _, r := range f.reqs {
+		if !json.Valid([]byte(r.Schema)) || r.Schema != want[r.SystemPrompt] {
+			t.Errorf("request with system prompt %.40q has schema %q, want its answer schema", r.SystemPrompt, r.Schema)
+		}
+	}
+	if len(f.reqs) != 4 {
+		t.Errorf("requests = %d, want 2 reviewers, 1 relocation and 1 refuter", len(f.reqs))
 	}
 }
 

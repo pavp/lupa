@@ -46,12 +46,14 @@ func readFile(t *testing.T, path string) string {
 func TestRunArguments(t *testing.T) {
 	base := []string{"-p", "--output-format", "json", "--tools", "Read,Grep,Glob", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--safe-mode", "--system-prompt", "You review code."}
 	tests := []struct {
-		name  string
-		model string
-		want  []string
+		name   string
+		model  string
+		schema string
+		want   []string
 	}{
-		{"default model", "", base},
-		{"model set", "opus", append(slices.Clone(base), "--model", "opus")},
+		{"default model", "", "", base},
+		{"model set", "opus", "", append(slices.Clone(base), "--model", "opus")},
+		{"schema set", "", `{"type":"object"}`, append(slices.Clone(base), "--json-schema", `{"type":"object"}`)},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -59,7 +61,7 @@ func TestRunArguments(t *testing.T) {
 			bin := fakeClaude(t, dir, "printf '%s' '"+successEnvelope+"'")
 
 			_, err := Adapter{Bin: bin}.Run(context.Background(), agent.Request{
-				Dir: dir, SystemPrompt: "You review code.", Prompt: "SECRET-PROMPT\nline two", Model: tt.model,
+				Dir: dir, SystemPrompt: "You review code.", Prompt: "SECRET-PROMPT\nline two", Model: tt.model, Schema: tt.schema,
 			})
 			if err != nil {
 				t.Fatalf("Run: %v", err)
@@ -98,9 +100,26 @@ func TestRunMapsSuccessEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	want := agent.Response{Text: `{"comments":[]}`, CostUSD: 0.0123, Turns: 3, InputTokens: 1500, OutputTokens: 42}
+	want := agent.Response{Text: `{"comments":[]}`, CostUSD: 0.0123, Turns: 3, InputTokens: 1507, OutputTokens: 42}
 	if got != want {
 		t.Errorf("Response = %+v, want %+v", got, want)
+	}
+}
+
+func TestRunPrefersStructuredOutput(t *testing.T) {
+	envelope := `{"type":"result","subtype":"success","is_error":false,"result":"Here it is: {\"a\":1}","structured_output":{"a":1},"usage":{"input_tokens":2,"cache_creation_input_tokens":1150,"cache_read_input_tokens":30,"output_tokens":5}}`
+	dir := t.TempDir()
+	bin := fakeClaude(t, dir, "printf '%s' '"+envelope+"'")
+
+	got, err := Adapter{Bin: bin}.Run(context.Background(), agent.Request{Dir: dir, Prompt: "p", Schema: `{"type":"object"}`})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got.Text != `{"a":1}` {
+		t.Errorf("Text = %q, want the structured output", got.Text)
+	}
+	if got.InputTokens != 1182 {
+		t.Errorf("InputTokens = %d, want 1182 (input plus cache creation and reads)", got.InputTokens)
 	}
 }
 
