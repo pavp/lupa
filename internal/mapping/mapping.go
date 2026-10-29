@@ -51,9 +51,17 @@ type Signals struct {
 	Files  []File `json:"files"`
 	Size   Size   `json:"size"`
 
-	ReviewNow    Gate           `json:"review_now"`
-	ReadingOrder []ReadingEntry `json:"reading_order"`
-	Unresolved   []Unresolved   `json:"unresolved"`
+	ReviewNow Gate `json:"review_now"`
+	// SinceLastLook is null on the first map of a target.
+	SinceLastLook *LastLook      `json:"since_last_look"`
+	ReadingOrder  []ReadingEntry `json:"reading_order"`
+	Unresolved    []Unresolved   `json:"unresolved"`
+}
+
+// LastLook is what changed since the last map of the same target.
+type LastLook struct {
+	Since string   `json:"since"`
+	Files []string `json:"files"`
 }
 
 // Decision is whether to review the change now or hand it back to its author.

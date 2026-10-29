@@ -285,3 +285,43 @@ func TestMapOwnersFromBaseAndGate(t *testing.T) {
 		t.Errorf("review_now = %+v, want hand-back suggesting a split", got.ReviewNow)
 	}
 }
+
+func TestMapSinceLastLook(t *testing.T) {
+	dir, _, firstHead := newRepo(t)
+	sinceOf := func() (raw json.RawMessage) {
+		t.Helper()
+		code, stdout, stderr := lupa(dir, "map", "feature", "--json")
+		if code != 0 {
+			t.Fatalf("exit %d, stderr: %s", code, stderr)
+		}
+		var got struct {
+			Since json.RawMessage `json:"since_last_look"`
+		}
+		if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+			t.Fatal(err)
+		}
+		return got.Since
+	}
+	if got := string(sinceOf()); got != "null" {
+		t.Errorf("first map since_last_look = %s, want null", got)
+	}
+	saved := filepath.Join(dir, ".git", "lupa", "feature", firstHead[:7], "signals.json")
+	if _, err := os.Stat(saved); err != nil {
+		t.Errorf("first map not saved at %s: %v", saved, err)
+	}
+
+	gitCmd(t, dir, "switch", "-q", "feature")
+	write(t, dir, "c.txt", "new\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "more")
+	var since struct {
+		Since string   `json:"since"`
+		Files []string `json:"files"`
+	}
+	if err := json.Unmarshal(sinceOf(), &since); err != nil {
+		t.Fatal(err)
+	}
+	if since.Since != firstHead || strings.Join(since.Files, ",") != "c.txt" {
+		t.Errorf("since_last_look = %+v, want since %s with only c.txt", since, firstHead)
+	}
+}

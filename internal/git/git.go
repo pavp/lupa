@@ -186,3 +186,12 @@ func (r Repo) Show(rev, path string) (content []byte, ok bool) {
 	}
 	return []byte(out), true
 }
+
+// GitDir returns the absolute path of the repository's git directory.
+func (r Repo) GitDir() (string, error) {
+	out, err := r.run("rev-parse", "--absolute-git-dir")
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}

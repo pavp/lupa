@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 
 	"github.com/pavp/lupa/internal/git"
@@ -13,6 +14,7 @@ import (
 	"github.com/pavp/lupa/internal/mapping"
 	"github.com/pavp/lupa/internal/owners"
 	"github.com/pavp/lupa/internal/reach"
+	"github.com/pavp/lupa/internal/store"
 )
 
 const usage = "usage: lupa map <base>..<head> | <branch> [--json]"
@@ -95,6 +97,19 @@ func runMap(args []string, env Env) error {
 		return err
 	}
 	signals := mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files)})
+	gitDir, err := repo.GitDir()
+	if err != nil {
+		return err
+	}
+	st := store.Store{Root: filepath.Join(gitDir, "lupa")}
+	signals.SinceLastLook = lastLook(repo, st, target, head)
+	saved, err := json.MarshalIndent(signals, "", "  ")
+	if err != nil {
+		return err
+	}
+	if _, err := st.Save(target, head, append(saved, '\n'), nil); err != nil {
+		return fmt.Errorf("saving the map: %w", err)
+	}
 
 	if asJSON {
 		enc := json.NewEncoder(env.Stdout)
@@ -146,6 +161,24 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 		}
 	}
 	return out, nil
+}
+
+// lastLook compares head with the last mapped head of the same target; nil on a first map,
+// or when that head no longer exists (garbage-collected after a force push).
+func lastLook(repo git.Repo, st store.Store, target, head string) *mapping.LastLook {
+	last, ok := st.Last(target)
+	if !ok {
+		return nil
+	}
+	changes, err := repo.NumStat(last, head)
+	if err != nil {
+		return nil
+	}
+	ll := &mapping.LastLook{Since: last, Files: []string{}}
+	for _, c := range changes {
+		ll.Files = append(ll.Files, c.Path)
+	}
+	return ll
 }
 
 // ownersOf reads CODEOWNERS at the base, in GitHub's lookup order, so a change cannot assign its own owners.
