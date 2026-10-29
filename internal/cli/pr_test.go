@@ -222,3 +222,47 @@ func TestMapPRGate(t *testing.T) {
 		})
 	}
 }
+
+func TestMapPRDescriptionVsDiff(t *testing.T) {
+	clone, _, head := newPRClone(t)
+	forge := prForge(head)
+	forge.pr.Body = "Adds `B` in b.go and drops `retry`. Callers read the value faster."
+	code, stdout, stderr := lupaWith(clone, forge, "map", "7", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got struct {
+		Claims []struct {
+			Text  string
+			Cites []struct {
+				Text, Path, Side, Code string
+				Found                  bool
+				Line                   int
+			}
+		} `json:"claims"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Claims) != 2 || len(got.Claims[0].Cites) != 3 || got.Claims[1].Cites != nil {
+		t.Fatalf("claims = %+v, want 2 claims, the first citing 3 things and the second none", got.Claims)
+	}
+	b, file, retry := got.Claims[0].Cites[0], got.Claims[0].Cites[1], got.Claims[0].Cites[2]
+	if !b.Found || b.Path != "b.go" || b.Side != "+" || b.Line != 3 || b.Code != "var B = 1" {
+		t.Errorf("`B` = %+v, want b.go:3 +var B = 1", b)
+	}
+	if !file.Found || file.Path != "b.go" || file.Line != 0 || retry.Found {
+		t.Errorf("b.go = %+v, retry = %+v; want b.go a changed file and retry not found", file, retry)
+	}
+
+	code, stdout, _ = lupaWith(clone, forge, "map", "7")
+	for _, want := range []string{
+		"**Description vs diff**",
+		"- \"Adds `B` in b.go and drops `retry`.\": `B` at `b.go:3` (`+var B = 1`); `b.go` is a changed file; `retry` not found",
+		"- \"Callers read the value faster.\": not checked, cites no code",
+	} {
+		if code != 0 || !strings.Contains(stdout, want) {
+			t.Errorf("report lacks %q:\n%s", want, stdout)
+		}
+	}
+}

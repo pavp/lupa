@@ -144,7 +144,13 @@ func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, 
 	if err != nil {
 		return repo, mapping.Signals{}, "", err
 	}
-	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t)}), key, nil
+	var patches map[string]string
+	if t.pr != nil {
+		if patches, err = repo.Patches(base, head); err != nil {
+			return repo, mapping.Signals{}, "", err
+		}
+	}
+	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t), Patches: patches}), key, nil
 }
 
 func runMap(args []string, env Env) error {

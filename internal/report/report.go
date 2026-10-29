@@ -111,7 +111,40 @@ func Markdown(s mapping.Signals) []byte {
 			fmt.Fprintf(&b, "%d. %s\n", i+1, q)
 		}
 	}
+	if len(s.Claims) > 0 {
+		b.WriteString("\n**Description vs diff**\n")
+		for _, c := range s.Claims {
+			fmt.Fprintf(&b, "- \"%s\": %s\n", c.Text, evidence(c))
+		}
+	}
 	return []byte(b.String())
+}
+
+// inlineCode wraps s in a code span that survives backticks inside it.
+func inlineCode(s string) string {
+	if strings.Contains(s, "`") {
+		return "`` " + s + " ``"
+	}
+	return "`" + s + "`"
+}
+
+// evidence says where the diff has each thing a claim cites; a claim citing no code is not checked.
+func evidence(c mapping.Claim) string {
+	if len(c.Cites) == 0 {
+		return "not checked, cites no code"
+	}
+	parts := make([]string, len(c.Cites))
+	for i, ct := range c.Cites {
+		switch {
+		case !ct.Found:
+			parts[i] = fmt.Sprintf("`%s` not found", ct.Text)
+		case ct.Side == "":
+			parts[i] = fmt.Sprintf("`%s` is a changed file", ct.Path)
+		default:
+			parts[i] = fmt.Sprintf("`%s` at `%s:%d` (%s)", ct.Text, ct.Path, ct.Line, inlineCode(ct.Side+ct.Code))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func ownersOf(s mapping.Signals, path string) string {

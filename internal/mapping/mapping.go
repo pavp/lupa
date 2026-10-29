@@ -77,7 +77,9 @@ type Signals struct {
 	// SinceLastLook is null on the first map of a target.
 	SinceLastLook *LastLook      `json:"since_last_look"`
 	ReadingOrder  []ReadingEntry `json:"reading_order"`
-	Unresolved    []Unresolved   `json:"unresolved"`
+	// Claims is null for a branch range.
+	Claims     []Claim      `json:"claims"`
+	Unresolved []Unresolved `json:"unresolved"`
 
 	TestsNotImportingSubject []TestMismatch `json:"tests_not_importing_subject"`
 }
@@ -144,6 +146,8 @@ type Input struct {
 	Owners map[string][]string
 	// PR is nil for a branch range.
 	PR *PR
+	// Patches are the unified diffs per path; claims are looked up in them.
+	Patches map[string]string
 }
 
 // Build computes the signals of the change.
@@ -175,6 +179,9 @@ func Build(in Input) Signals {
 	s.Size.Changed = s.Size.Additions + s.Size.Deletions
 	if in.PR != nil {
 		s.PR = &PRInfo{Number: in.PR.Number, URL: in.PR.URL, Title: in.PR.Title}
+		if s.Claims = claims(in.PR.Body, s.Files, in.Patches); s.Claims == nil {
+			s.Claims = []Claim{}
+		}
 	}
 	s.ReviewNow = gate(s, in.PR)
 	s.ReadingOrder, s.TestsNotImportingSubject = readingOrder(s.Files, reach.Imports)

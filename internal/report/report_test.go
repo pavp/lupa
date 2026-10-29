@@ -111,3 +111,12 @@ func TestMarkdownNoTestsAndSinceLastLook(t *testing.T) {
 		}
 	}
 }
+
+func TestClaimEvidenceKeepsBackticksInsideCode(t *testing.T) {
+	got := string(Markdown(mapping.Signals{Claims: []mapping.Claim{{Text: "Adds `pr`", Cites: []mapping.Cite{
+		{Text: "pr", Found: true, Path: "docs/schema.md", Side: "+", Line: 4, Code: "| `pr` | object |"},
+	}}}}))
+	if want := "`pr` at `docs/schema.md:4` (`` +| `pr` | object | ``)"; !strings.Contains(got, want) {
+		t.Errorf("report lacks %q:\n%s", want, got)
+	}
+}

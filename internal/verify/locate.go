@@ -185,3 +185,44 @@ func firstMatch(want []string, code []codeLine) (Location, bool) {
 func span(want []string, code []codeLine, start int) Location {
 	return Location{Start: code[start].n, End: code[start+len(want)-1].n}
 }
+
+// Changed is an added (`+`) or removed (`-`) line of a unified diff, numbered on its own side and trimmed.
+type Changed struct {
+	Side string
+	N    int
+	Text string
+}
+
+// ChangedLines returns the non-blank added and removed lines of a unified diff, in diff order.
+func ChangedLines(patch string) []Changed {
+	var lines []Changed
+	var oldN, newN, oldLeft, newLeft int
+	for _, l := range strings.Split(patch, "\n") {
+		if oldLeft == 0 && newLeft == 0 {
+			if m := hunkHeader.FindStringSubmatch(l); m != nil {
+				oldN, oldLeft = atoi(m[1]), count(m[2])
+				newN, newLeft = atoi(m[3]), count(m[4])
+			}
+			continue
+		}
+		marker, text := byte(' '), ""
+		if l != "" {
+			marker, text = l[0], strings.TrimSpace(l[1:])
+		}
+		switch marker {
+		case ' ':
+			newN, newLeft, oldN, oldLeft = newN+1, newLeft-1, oldN+1, oldLeft-1
+		case '+':
+			if text != "" {
+				lines = append(lines, Changed{"+", newN, text})
+			}
+			newN, newLeft = newN+1, newLeft-1
+		case '-':
+			if text != "" {
+				lines = append(lines, Changed{"-", oldN, text})
+			}
+			oldN, oldLeft = oldN+1, oldLeft-1
+		}
+	}
+	return lines
+}
