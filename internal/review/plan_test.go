@@ -142,7 +142,7 @@ func TestPlanEstimate(t *testing.T) {
 	if r.Budget != DefaultBudget {
 		t.Errorf("budget = %d, want %d", r.Budget, DefaultBudget)
 	}
-	want := Estimate{Runs: 3, Tokens: (101+4000+3)/4 + (50+4000+3)/4}
+	want := Estimate{Runs: 3, Tokens: (101+4000+3)/4 + (50+4000+3)/4 + 2*ReadingTokens}
 	if r.Estimate != want {
 		t.Errorf("estimate = %+v, want %+v", r.Estimate, want)
 	}
@@ -150,7 +150,7 @@ func TestPlanEstimate(t *testing.T) {
 		t.Errorf("empty estimate = %+v, want zero", empty.Estimate)
 	}
 	measured := Plan([]mapping.File{file("a.go")}, map[string]string{"a.go": hunk(1, 101)}, Options{Overhead: 9000})
-	if want := (Estimate{Runs: 2, Tokens: (101 + 9000 + 3) / 4}); measured.Estimate != want {
+	if want := (Estimate{Runs: 2, Tokens: (101+9000+3)/4 + ReadingTokens}); measured.Estimate != want {
 		t.Errorf("estimate with a measured overhead = %+v, want %+v", measured.Estimate, want)
 	}
 }

@@ -236,9 +236,10 @@ func TestRunMarksAFailedGroupNotReviewedAndGoesOn(t *testing.T) {
 			if got := paths(out.Findings); !reflect.DeepEqual(got, []string{"src/cart.ts"}) {
 				t.Errorf("findings = %v, want the cart finding of group 2", got)
 			}
-			calls := 2
+			// Two reviewers and one refuter for the blocking cart finding; an unusable answer adds its retry.
+			calls := 3
 			if tt.name == "unusable reply" {
-				calls = 3
+				calls = 4
 			}
 			if out.Usage.Calls != calls {
 				t.Errorf("usage calls = %d, want %d (failed runs count)", out.Usage.Calls, calls)
@@ -366,7 +367,7 @@ func TestRunMergesDuplicatesAcrossGroups(t *testing.T) {
 	if got.Finding.Merged != 1 || got.Finding.Level != verify.LevelBlocking || !got.Relocated {
 		t.Errorf("survivor = %+v, want the relocated blocking comment that absorbed one", got)
 	}
-	if f.count(filterSystem) != 0 {
-		t.Errorf("refuter calls = %d, want 0 with no important finding", f.count(filterSystem))
+	if f.count(filterSystem) != 1 {
+		t.Errorf("refuter calls = %d, want 1: the blocking survivor faces the refuter", f.count(filterSystem))
 	}
 }

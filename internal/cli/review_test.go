@@ -83,7 +83,7 @@ func TestReviewPlanJSON(t *testing.T) {
 		}
 	}
 	empty := review.BuildPrompt(review.PromptInput{})
-	if overhead := len(empty.System) + len(empty.User); p.Estimate.Runs != 2 || p.Estimate.Tokens != (p.Groups[0].Bytes+overhead+3)/4 {
+	if overhead := len(empty.System) + len(empty.User); p.Estimate.Runs != 2 || p.Estimate.Tokens != (p.Groups[0].Bytes+overhead+3)/4+review.ReadingTokens {
 		t.Errorf("estimate = %+v for a group of %d bytes", p.Estimate, p.Groups[0].Bytes)
 	}
 }
