@@ -449,7 +449,7 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 	if err != nil {
 		return mapping.Reach{}, fmt.Errorf("reach: %w", err)
 	}
-	out := mapping.Reach{Importers: map[string][]string{}, Imports: map[string][]string{}}
+	out := mapping.Reach{Importers: map[string][]string{}, Direct: map[string][]string{}, Imports: map[string][]string{}}
 	for _, f := range changed {
 		if imps, ok := g.Imports[f.Path]; ok {
 			out.Imports[f.Path] = imps
@@ -457,6 +457,11 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 		for _, imp := range g.Importers(f.Path) {
 			if !inChange[imp] {
 				out.Importers[f.Path] = append(out.Importers[f.Path], imp)
+			}
+		}
+		for _, imp := range g.DirectImporters(f.Path) {
+			if !inChange[imp] {
+				out.Direct[f.Path] = append(out.Direct[f.Path], imp)
 			}
 		}
 	}
