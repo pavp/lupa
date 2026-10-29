@@ -58,6 +58,17 @@ type signals struct {
 	Schema string `json:"schema"`
 	Base   string `json:"base"`
 	Head   string `json:"head"`
+	Files  []struct {
+		Path      string `json:"path"`
+		Additions int    `json:"additions"`
+		Deletions int    `json:"deletions"`
+	} `json:"files"`
+	Size struct {
+		Files     int `json:"files"`
+		Additions int `json:"additions"`
+		Deletions int `json:"deletions"`
+		Changed   int `json:"changed"`
+	} `json:"size"`
 }
 
 func TestMapJSON(t *testing.T) {
@@ -76,17 +87,40 @@ func TestMapJSON(t *testing.T) {
 			if got.Schema != "lupa.signals/v0" || got.Base != base || got.Head != head {
 				t.Errorf("schema/base/head = %q %q %q, want lupa.signals/v0 %q (merge-base) %q", got.Schema, got.Base, got.Head, base, head)
 			}
+			if len(got.Files) != 2 ||
+				got.Files[0].Path != "a.txt" || got.Files[0].Additions != 2 || got.Files[0].Deletions != 1 ||
+				got.Files[1].Path != "b.go" || got.Files[1].Additions != 3 || got.Files[1].Deletions != 0 {
+				t.Errorf("files = %+v", got.Files)
+			}
+			if got.Size.Files != 2 || got.Size.Additions != 5 || got.Size.Deletions != 1 || got.Size.Changed != 6 {
+				t.Errorf("size = %+v", got.Size)
+			}
 		})
 	}
 }
 
+func TestMapBinaryFile(t *testing.T) {
+	dir, _, _ := newRepo(t)
+	gitCmd(t, dir, "switch", "-q", "feature")
+	write(t, dir, "logo.png", "\x89PNG\x00\x01\x02")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "logo")
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(stdout, `"path": "logo.png",`) || !strings.Contains(stdout, `"binary": true`) {
+		t.Errorf("binary file not reported as binary:\n%s", stdout)
+	}
+}
+
 func TestMapText(t *testing.T) {
-	dir, base, head := newRepo(t)
+	dir, _, _ := newRepo(t)
 	code, stdout, stderr := lupa(dir, "map", "feature")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
-	if want := "base " + base + "\nhead " + head + "\n"; stdout != want {
+	if want := "2 files, +5 -1 (6 changed lines)\n"; stdout != want {
 		t.Errorf("stdout = %q, want %q", stdout, want)
 	}
 }

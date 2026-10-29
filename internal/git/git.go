@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"strconv"
 	"strings"
 )
 
@@ -16,6 +17,14 @@ var ErrNotRepository = errors.New("not a git repository")
 type UnknownRevisionError struct{ Rev string }
 
 func (e UnknownRevisionError) Error() string { return fmt.Sprintf("unknown revision %q", e.Rev) }
+
+// FileChange is one file's line counts between two commits. Binary files have no line counts.
+type FileChange struct {
+	Path      string
+	Additions int
+	Deletions int
+	Binary    bool
+}
 
 // Repo is a local repository rooted at or below Dir.
 type Repo struct{ Dir string }
@@ -69,4 +78,35 @@ func (r Repo) DefaultBranch() (string, error) {
 		}
 	}
 	return "", errors.New("cannot find the default branch: no origin/HEAD, main or master")
+}
+
+// NumStat returns the per-file line counts of the diff from base to head, renames shown as delete plus add.
+func (r Repo) NumStat(base, head string) ([]FileChange, error) {
+	out, err := r.run("diff", "--numstat", "-z", "--no-renames", base, head)
+	if err != nil {
+		return nil, err
+	}
+	var changes []FileChange
+	for _, rec := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+		if rec == "" {
+			continue
+		}
+		fields := strings.SplitN(rec, "\t", 3)
+		if len(fields) != 3 {
+			return nil, fmt.Errorf("unexpected numstat record %q", rec)
+		}
+		c := FileChange{Path: fields[2]}
+		if fields[0] == "-" {
+			c.Binary = true
+		} else {
+			if c.Additions, err = strconv.Atoi(fields[0]); err != nil {
+				return nil, fmt.Errorf("numstat additions %q: %w", fields[0], err)
+			}
+			if c.Deletions, err = strconv.Atoi(fields[1]); err != nil {
+				return nil, fmt.Errorf("numstat deletions %q: %w", fields[1], err)
+			}
+		}
+		changes = append(changes, c)
+	}
+	return changes, nil
 }

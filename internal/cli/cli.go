@@ -79,14 +79,23 @@ func runMap(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	signals := mapping.Build(base, head)
+	changes, err := repo.NumStat(base, head)
+	if err != nil {
+		return err
+	}
+	files := make([]mapping.File, len(changes))
+	for i, c := range changes {
+		files[i] = mapping.File{Path: c.Path, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary}
+	}
+	signals := mapping.Build(base, head, files)
 
 	if asJSON {
 		enc := json.NewEncoder(env.Stdout)
 		enc.SetIndent("", "  ")
 		return enc.Encode(signals)
 	}
-	_, err = fmt.Fprintf(env.Stdout, "base %s\nhead %s\n", signals.Base, signals.Head)
+	_, err = fmt.Fprintf(env.Stdout, "%d files, +%d -%d (%d changed lines)\n",
+		signals.Size.Files, signals.Size.Additions, signals.Size.Deletions, signals.Size.Changed)
 	return err
 }
 
