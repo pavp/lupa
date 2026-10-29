@@ -44,9 +44,9 @@ Secondary commands:
 
 ### From the agent conversation
 
-An agent skill named `lupa` wraps the CLI so the user keeps talking to their own agent. One skill mirrors the CLI's single entry point: `/lupa 482` reviews (the default), `/lupa map 482` and `/lupa since 482` are shortcuts, and natural language triggers it too. How Pi invokes a skill explicitly is still to verify.
+An agent skill named `lupa` wraps the CLI so the user keeps talking to their own agent. One skill mirrors the CLI's single entry point: `/lupa 482` reviews (the default), `/lupa map 482` and `/lupa since 482` are shortcuts, and natural language triggers it too. Pi forces a skill with `/skill:<name>` and appends the rest as the request, so there it is `/skill:lupa 482`.
 
-The skill ships inside the binary: `lupa skill install` writes its `SKILL.md` into the agents' skill directories, so the skill always matches the installed binary's `--json` schema.
+The skill ships inside the binary: `lupa skill install` writes its `SKILL.md` into the agents' skill directories, so the skill always matches the installed binary's `--json` schema. It follows the Agent Skills format: written once to `~/.agents/skills/lupa/` (Pi reads that location natively) and linked from `~/.claude/skills/lupa`. Reviewer runs never load it: they start with skills disabled.
 
 "Review PR 482 with lupa" → the agent runs `lupa review 482 --plan --json`, presents the map and the plan, asks, then runs the review in the background and presents the findings. "Map PR 482" and "what changed since my last look" are shortcuts of the same skill.
 
@@ -101,7 +101,7 @@ Signals and reports carry a `language` field from v1. v1 ships one provider: Typ
 
 | In | Out for now |
 |---|---|
-| Go, single binary, Homebrew tap (`brew install pavp/tap/lupa`) | npm distribution |
+| Go, single static binary (`CGO_ENABLED=0`; darwin and linux, amd64 and arm64), released on version tags to the Homebrew tap (`brew install pavp/tap/lupa`) | npm distribution |
 | Agents: Claude Code, Pi | Other agent CLIs |
 | Branch ranges and GitHub PRs through `gh` | Other forges |
 | TypeScript/JavaScript provider | Other language providers |
