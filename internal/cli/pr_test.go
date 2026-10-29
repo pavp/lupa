@@ -108,7 +108,7 @@ func TestPRTargetErrors(t *testing.T) {
 		target string
 		stderr string
 	}{
-		{"a PR of a repo this clone does not track", other, "https://github.com/acme/other/pull/7", "acme/other"},
+		{"a PR number whose repo no remote of this clone points at", other, "7", "acme/other"},
 		{"the forge fails", failing, "9", "no pull requests found"},
 	}
 	for _, tt := range tests {
@@ -118,5 +118,60 @@ func TestPRTargetErrors(t *testing.T) {
 				t.Errorf("exit %d, stdout %q, stderr %q; want 2 and %q", code, stdout, stderr, tt.stderr)
 			}
 		})
+	}
+}
+
+// useUpstream points every git process of the test at upstream for https://github.com/acme/shop.git.
+func useUpstream(t *testing.T, clone string) {
+	t.Helper()
+	upstream := gitCmd(t, clone, "config", "--get-regexp", `^url\..*\.insteadof$`)
+	upstream = strings.TrimSuffix(strings.TrimPrefix(strings.Fields(upstream)[0], "url."), ".insteadof")
+	t.Setenv("GIT_CONFIG_COUNT", "1")
+	t.Setenv("GIT_CONFIG_KEY_0", "url."+upstream+".insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", "https://github.com/acme/shop.git")
+}
+
+func TestMapPRByURLWithoutItsClone(t *testing.T) {
+	clone, base, head := newPRClone(t)
+	useUpstream(t, clone)
+	elsewhere, _, _ := newRepo(t)
+	for name, dir := range map[string]string{"outside any repo": t.TempDir(), "inside another repo": elsewhere} {
+		t.Run(name, func(t *testing.T) {
+			cache := t.TempDir()
+			run := func() (int, string, string) {
+				var out, errOut bytes.Buffer
+				code := Run([]string{"map", "https://github.com/acme/shop/pull/7", "--json"},
+					Env{Dir: dir, Stdout: &out, Stderr: &errOut, Forge: prForge(head), CacheDir: cache})
+				return code, out.String(), errOut.String()
+			}
+			code, stdout, stderr := run()
+			if code != 0 {
+				t.Fatalf("exit %d, stderr: %s", code, stderr)
+			}
+			var got signals
+			if err := json.Unmarshal([]byte(stdout), &got); err != nil || got.Base != base || got.Head != head {
+				t.Fatalf("range = %+v (%v), want %s..%s", got, err, base[:7], head[:7])
+			}
+			cached := filepath.Join(cache, "github.com", "acme", "shop")
+			if !strings.Contains(stderr, "Cloning acme/shop") {
+				t.Errorf("stderr %q does not say the first run clones", stderr)
+			}
+			if f := gitCmd(t, cached, "config", "remote.origin.partialclonefilter"); f != "blob:none" {
+				t.Errorf("cache clone filter = %q, want blob:none", f)
+			}
+			if _, err := os.Stat(filepath.Join(cached, ".git", "lupa", "pr-7")); err != nil {
+				t.Errorf("map not saved in the cache clone: %v", err)
+			}
+			if code, _, stderr := run(); code != 0 || strings.Contains(stderr, "Cloning") {
+				t.Errorf("second run: exit %d, stderr %q; want the cached clone reused", code, stderr)
+			}
+		})
+	}
+}
+
+func TestPRNumberOutsideAClone(t *testing.T) {
+	code, stdout, stderr := lupaWith(t.TempDir(), prForge("abc"), "map", "7")
+	if code != 2 || stdout != "" || !strings.Contains(stderr, "URL") {
+		t.Errorf("exit %d, stdout %q, stderr %q; want 2 and a hint to pass the URL", code, stdout, stderr)
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -39,6 +40,8 @@ type Env struct {
 	Agent  agent.Agent
 	// Forge reads pull requests; the GitHub client through gh when nil.
 	Forge Forge
+	// CacheDir holds the clones of PRs reviewed outside their clone; empty means lupa under the user cache dir.
+	CacheDir string
 }
 
 // Forge reads a pull request, running in dir so a bare number resolves against that clone.
@@ -117,11 +120,7 @@ func parseArgs(args []string, flags map[string]*bool, values map[string]*string)
 // mapChange resolves the target to a commit range and builds the map's signals for it. key names
 // the target in the store: the target itself, or pr-<n> for a pull request in any of its forms.
 func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, key string, err error) {
-	repo = git.Repo{Dir: env.Dir}
-	if err := repo.Check(); err != nil {
-		return repo, mapping.Signals{}, "", fmt.Errorf("%w: %s", err, env.Dir)
-	}
-	base, head, key, err := resolveTarget(env, repo, target)
+	repo, base, head, key, err := resolveTarget(env, target)
 	if err != nil {
 		return repo, mapping.Signals{}, "", err
 	}
@@ -537,39 +536,94 @@ func ownersOf(repo git.Repo, base string, files []mapping.File) map[string][]str
 }
 
 // resolveRange turns `<from>..<to>` or `<branch>` into the merge-base and head commits, the diff a PR would show.
-// resolveTarget reads target as a pull request (`482`, `#482`, a URL) or else as a branch range.
-func resolveTarget(env Env, repo git.Repo, target string) (base, head, key string, err error) {
+// resolveTarget reads target as a pull request (`482`, `#482`, a URL) or else as a branch range of
+// the clone at env.Dir. repo is the clone the change is read from: env.Dir's, or a cache clone.
+func resolveTarget(env Env, target string) (repo git.Repo, base, head, key string, err error) {
+	repo = git.Repo{Dir: env.Dir}
+	inClone := repo.Check()
 	ref, ok := github.ParseRef(target)
 	if !ok {
+		if inClone != nil {
+			return repo, "", "", "", fmt.Errorf("%w: %s", inClone, env.Dir)
+		}
 		base, head, err = resolveRange(repo, target)
-		return base, head, target, err
+		return repo, base, head, target, err
 	}
-	base, head, err = resolvePR(env, repo, ref)
-	return base, head, fmt.Sprintf("pr-%d", ref.Number), err
-}
-
-// resolvePR fetches the PR's head and base branch into refs/lupa/pr/<n>/ from the remote that
-// points at the PR's repo, without touching the checkout; the base is their merge-base, as the PR shows it.
-func resolvePR(env Env, repo git.Repo, ref github.Ref) (base, head string, err error) {
+	if inClone != nil && ref.Owner == "" {
+		return repo, "", "", "", usageError{fmt.Sprintf("PR %d: run lupa inside its clone, or pass the PR's URL", ref.Number)}
+	}
 	forge := env.Forge
 	if forge == nil {
 		forge = github.Client{}
 	}
-	pr, err := forge.PR(repo.Dir, ref)
+	pr, err := forge.PR(env.Dir, ref)
 	if err != nil {
-		return "", "", err
+		return repo, "", "", "", err
 	}
+	key = fmt.Sprintf("pr-%d", pr.Ref.Number)
+	remote := ""
+	if inClone == nil {
+		if remote, err = remoteOf(repo, pr.Ref); err != nil {
+			return repo, "", "", "", err
+		}
+	}
+	if remote == "" {
+		if ref.Owner == "" {
+			return repo, "", "", "", fmt.Errorf("PR %d is in %s/%s, which no remote of this clone points at", pr.Ref.Number, pr.Ref.Owner, pr.Ref.Repo)
+		}
+		if repo, err = cacheClone(env, pr.Ref); err != nil {
+			return repo, "", "", "", err
+		}
+		remote = "origin"
+	}
+	base, head, err = fetchPR(repo, remote, pr)
+	return repo, base, head, key, err
+}
+
+// remoteOf names the remote of repo whose URL points at ref's repo, or "" when none does.
+func remoteOf(repo git.Repo, ref github.Ref) (string, error) {
 	remotes, err := repo.Remotes()
 	if err != nil {
-		return "", "", err
+		return "", err
 	}
-	names := slices.Sorted(maps.Keys(remotes))
-	i := slices.IndexFunc(names, func(n string) bool { return github.SameRepo(remotes[n], pr.Ref) })
-	if i < 0 {
-		return "", "", fmt.Errorf("PR %d is in %s/%s, which no remote of this clone points at", pr.Ref.Number, pr.Ref.Owner, pr.Ref.Repo)
+	for _, name := range slices.Sorted(maps.Keys(remotes)) {
+		if github.SameRepo(remotes[name], ref) {
+			return name, nil
+		}
 	}
+	return "", nil
+}
+
+// cacheClone returns the cache's blobless clone of ref's repo, cloning it on first use.
+func cacheClone(env Env, ref github.Ref) (git.Repo, error) {
+	root := env.CacheDir
+	if root == "" {
+		dir, err := os.UserCacheDir()
+		if err != nil {
+			return git.Repo{}, fmt.Errorf("no cache directory for the PR's clone: %w", err)
+		}
+		root = filepath.Join(dir, "lupa")
+	}
+	dir := filepath.Join(root, ref.Host, ref.Owner, ref.Repo)
+	if _, err := os.Stat(dir); errors.Is(err, os.ErrNotExist) {
+		fmt.Fprintf(env.Stderr, "Cloning %s/%s into %s (first time, without file contents)\n", ref.Owner, ref.Repo, dir)
+		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
+			return git.Repo{}, err
+		}
+		if err := git.CloneBlobless(fmt.Sprintf("https://%s/%s/%s.git", ref.Host, ref.Owner, ref.Repo), dir); err != nil {
+			return git.Repo{}, err
+		}
+	}
+	repo := git.Repo{Dir: dir}
+	return repo, repo.Check()
+}
+
+// fetchPR fetches the PR's head and base branch into refs/lupa/pr/<n>/ from remote, without touching
+// any checkout, and returns their merge-base and the head, as the PR shows them. In a blobless clone
+// the head's file contents are brought in at once, since the map reads every file at head.
+func fetchPR(repo git.Repo, remote string, pr github.PR) (base, head string, err error) {
 	refs := fmt.Sprintf("refs/lupa/pr/%d/", pr.Ref.Number)
-	if err := repo.Fetch(names[i], fmt.Sprintf("+refs/pull/%d/head:%shead", pr.Ref.Number, refs), "+refs/heads/"+pr.BaseRef+":"+refs+"base"); err != nil {
+	if err := repo.Fetch(remote, fmt.Sprintf("+refs/pull/%d/head:%shead", pr.Ref.Number, refs), "+refs/heads/"+pr.BaseRef+":"+refs+"base"); err != nil {
 		return "", "", err
 	}
 	if head, err = repo.Commit(refs + "head"); err != nil {
@@ -581,6 +635,11 @@ func resolvePR(env Env, repo git.Repo, ref github.Ref) (base, head string, err e
 	}
 	if base, err = repo.MergeBase(tip, head); err != nil {
 		return "", "", err
+	}
+	if repo.Blobless() {
+		if err := repo.Prefetch(head); err != nil {
+			return "", "", err
+		}
 	}
 	return base, head, nil
 }
