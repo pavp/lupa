@@ -1,9 +1,11 @@
 package review
 
 import (
+	"cmp"
 	"context"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pavp/lupa/internal/agent"
@@ -22,7 +24,12 @@ type RunInput struct {
 	Dir         string
 	Timeout     time.Duration
 	Head        func(path string) (string, bool)
+	// Parallel bounds how many groups are reviewed at once; zero means DefaultParallel.
+	Parallel int
 }
+
+// DefaultParallel is how many reviewer runs go at once when RunInput.Parallel is zero.
+const DefaultParallel = 4
 
 // The stages that drop a comment before it becomes a finding.
 const (
@@ -60,30 +67,37 @@ type RunOutput struct {
 
 const reasonUninspected = "the reviewer did not report inspecting it"
 
-// Run reviews each planned group in order, verifies and anchors its comments, then dedupes the
-// findings of every group and filters them in one refuter run. An unusable answer gets one retry;
-// a failed group marks its files not reviewed and the next group still runs.
+// Run reviews the planned groups, up to Parallel at a time, verifies and anchors their comments,
+// then dedupes the findings of every group and filters them in one refuter run. Results are merged
+// in group order, whatever order the runs finish in. An unusable answer gets one retry; a failed
+// group marks its files not reviewed and the other groups still run.
 func Run(ctx context.Context, in RunInput) RunOutput {
 	out := RunOutput{Ledger: slices.Clone(in.Plan.Ledger)}
-	ag := meter{Agent: in.Agent, usage: &out.Usage}
+	ag := meter{Agent: in.Agent, usage: &out.Usage, mu: &sync.Mutex{}}
+	results := make([]groupResult, len(in.Plan.Groups))
+	limit := make(chan struct{}, cmp.Or(in.Parallel, DefaultParallel))
+	var wg sync.WaitGroup
+	for i, g := range in.Plan.Groups {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			limit <- struct{}{}
+			defer func() { <-limit }()
+			results[i] = reviewOne(ctx, in, ag, g)
+		}()
+	}
+	wg.Wait()
+
 	var anchored []Anchored
-	for _, g := range in.Plan.Groups {
-		patch, paths := groupPatch(g)
-		p := BuildPrompt(PromptInput{Patch: patch, Paths: paths, Importers: in.Importers, Conventions: in.Conventions})
-		parsed, reason := reviewGroup(ctx, ag, agent.Request{Dir: in.Dir, SystemPrompt: p.System, Prompt: p.User, Timeout: in.Timeout, Schema: reviewSchema}, paths)
-		if reason != "" {
-			out.Ledger = markGroup(out.Ledger, paths, g.ID, reason)
+	for i, r := range results {
+		id := in.Plan.Groups[i].ID
+		if r.reason != "" {
+			out.Ledger = markGroup(out.Ledger, r.paths, id, r.reason)
 			continue
 		}
-		out.Ledger = markGroup(out.Ledger, parsed.Uninspected, g.ID, reasonUninspected)
-		for _, d := range parsed.Dropped {
-			out.Dropped = append(out.Dropped, Drop{Stage: StageSchema, Group: g.ID, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
-		}
-		res := Anchor(ctx, AnchorInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Comments: parsed.Comments, Patches: in.Patches, Head: in.Head})
-		for _, d := range res.Dropped {
-			out.Dropped = append(out.Dropped, Drop{Stage: StageAnchor, Group: g.ID, Reason: d.Reason, Comment: d.Comment})
-		}
-		anchored = append(anchored, res.Findings...)
+		out.Ledger = markGroup(out.Ledger, r.uninspected, id, reasonUninspected)
+		out.Dropped = append(out.Dropped, r.dropped...)
+		anchored = append(anchored, r.findings...)
 	}
 
 	filtered := Filter(ctx, FilterInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: dedupe(anchored), Head: in.Head})
@@ -93,6 +107,37 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	}
 	out.Notes = append(out.Notes, filtered.Notes...)
 	return out
+}
+
+// groupResult is what one group's review leaves for the merge; a non-empty reason means the
+// group was not reviewed.
+type groupResult struct {
+	paths       []string
+	reason      string
+	uninspected []string
+	dropped     []Drop
+	findings    []Anchored
+}
+
+func reviewOne(ctx context.Context, in RunInput, ag agent.Agent, g Group) groupResult {
+	patch, paths := groupPatch(g)
+	p := BuildPrompt(PromptInput{Patch: patch, Paths: paths, Importers: in.Importers, Conventions: in.Conventions})
+	r := groupResult{paths: paths}
+	parsed, reason := reviewGroup(ctx, ag, agent.Request{Dir: in.Dir, SystemPrompt: p.System, Prompt: p.User, Timeout: in.Timeout, Schema: reviewSchema}, paths)
+	if reason != "" {
+		r.reason = reason
+		return r
+	}
+	r.uninspected = parsed.Uninspected
+	for _, d := range parsed.Dropped {
+		r.dropped = append(r.dropped, Drop{Stage: StageSchema, Group: g.ID, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
+	}
+	res := Anchor(ctx, AnchorInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Comments: parsed.Comments, Patches: in.Patches, Head: in.Head})
+	for _, d := range res.Dropped {
+		r.dropped = append(r.dropped, Drop{Stage: StageAnchor, Group: g.ID, Reason: d.Reason, Comment: d.Comment})
+	}
+	r.findings = res.Findings
+	return r
 }
 
 // reviewGroup runs one reviewer and parses its answer, running it once more when the answer is
@@ -168,14 +213,17 @@ func dedupe(fs []Anchored) []Anchored {
 	return out
 }
 
-// meter sums the usage of every call it forwards; the run is sequential, so it needs no lock.
+// meter sums the usage of every call it forwards, from any number of goroutines.
 type meter struct {
 	agent.Agent
 	usage *Usage
+	mu    *sync.Mutex
 }
 
 func (m meter) Run(ctx context.Context, req agent.Request) (agent.Response, error) {
 	resp, err := m.Agent.Run(ctx, req)
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.usage.Calls++
 	m.usage.CostUSD += resp.CostUSD
 	m.usage.InputTokens += resp.InputTokens
