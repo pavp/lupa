@@ -18,7 +18,8 @@
 | `files[].direct_importers` | string[], optional | The `importers` that import this file themselves; the report names these and counts the rest. |
 | `files[].owners` | string[], optional | Owners from the base branch's CODEOWNERS; absent when none. |
 | `size` | object | `files`, `additions`, `deletions`, `changed` (additions + deletions) over authored files; `generated_files` counts the skipped generated ones, which add no lines. |
-| `review_now` | object | `decision`: `review` or `hand-back`; `reason`. A change over 400 changed lines, generated excluded, is handed back; the decision is advisory and every other field is still filled. |
+| `pr` | object or null | For a pull request: `number`, `url`, `title`; null for a branch range. |
+| `review_now` | object | `decision`: `review` or `hand-back`; `reason`; `reply`, the suggested reply to the author, on a hand-back only. First match wins: another open PR changes at least half of the same files, generated excluded (possible duplicate); over 400 changed lines, generated excluded (suggest a split); no description, or fewer than 10 words of description and no linked issue (ask for intent). The PR rules apply to pull requests only; the decision is advisory and every other field is still filled. |
 | `since_last_look` | object or null | `null` on the first map of a target; else `since` (the last mapped head) and `files` changed since then. |
 | `reading_order[]` | array | `path`, `section` (`read-first`, `skim`, `skip`) and `why`. A test sits right before the file it tests when it imports it. |
 | `tests_not_importing_subject[]` | array | `test`, `subject` and `line` of a changed test named after a changed file that does not import it, so it may not exercise it. Tests are paired with their subject only when they import it. |

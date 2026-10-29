@@ -12,12 +12,17 @@ import (
 	"github.com/pavp/lupa/internal/forge/github"
 )
 
-// fakeForge answers PR with a fixed pull request and records the refs it was asked for.
+// fakeForge answers PR with a fixed pull request, OpenPRs with a fixed list, and records the refs it
+// was asked for.
 type fakeForge struct {
-	pr   github.PR
-	err  error
-	refs []github.Ref
+	pr      github.PR
+	err     error
+	open    []github.PR
+	openErr error
+	refs    []github.Ref
 }
+
+func (f *fakeForge) OpenPRs(github.Ref) ([]github.PR, error) { return f.open, f.openErr }
 
 func (f *fakeForge) PR(_ string, ref github.Ref) (github.PR, error) {
 	f.refs = append(f.refs, ref)
@@ -46,7 +51,7 @@ func newPRClone(t *testing.T) (clone, base, head string) {
 
 func prForge(head string) *fakeForge {
 	return &fakeForge{pr: github.PR{Ref: github.Ref{Host: "github.com", Owner: "acme", Repo: "shop", Number: 7},
-		Title: "Change a and add b", Body: "Adds B.", BaseRef: "main", HeadSHA: head}}
+		Title: "Change a and add b", Body: "Adds B so that callers can read the new value without parsing a.txt.", BaseRef: "main", HeadSHA: head}}
 }
 
 func lupaWith(dir string, forge Forge, args ...string) (code int, stdout, stderr string) {
@@ -173,5 +178,47 @@ func TestPRNumberOutsideAClone(t *testing.T) {
 	code, stdout, stderr := lupaWith(t.TempDir(), prForge("abc"), "map", "7")
 	if code != 2 || stdout != "" || !strings.Contains(stderr, "URL") {
 		t.Errorf("exit %d, stdout %q, stderr %q; want 2 and a hint to pass the URL", code, stdout, stderr)
+	}
+}
+
+func TestMapPRGate(t *testing.T) {
+	clone, _, head := newPRClone(t)
+	dup := prForge(head)
+	dup.open = []github.PR{{Ref: github.Ref{Number: 9}, Title: "Same change", Files: []string{"a.txt", "b.go"}}}
+	unlisted := prForge(head)
+	unlisted.openErr = errors.New("gh pr list: rate limited")
+	silent := prForge(head)
+	silent.pr.Body = ""
+	tests := []struct {
+		name, decision, reason, stderr string
+		forge                          *fakeForge
+	}{
+		{"possible duplicate", "hand-back", "PR #9 (Same change) changes 2 of the same 2 files", "", dup},
+		{"open PRs not listed", "review", "within 400", "duplicate check skipped: gh pr list: rate limited", unlisted},
+		{"no description", "hand-back", "no description", "", silent},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			code, stdout, stderr := lupaWith(clone, tt.forge, "map", "7", "--json")
+			if code != 0 || !strings.Contains(stderr, tt.stderr) {
+				t.Fatalf("exit %d, stderr %q; want 0 and %q", code, stderr, tt.stderr)
+			}
+			var got struct {
+				PR struct {
+					Number int
+					URL    string
+				} `json:"pr"`
+				ReviewNow struct{ Decision, Reason, Reply string } `json:"review_now"`
+			}
+			if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+				t.Fatal(err)
+			}
+			if got.PR.Number != 7 || got.PR.URL != "https://github.com/acme/shop/pull/7" {
+				t.Errorf("pr = %+v, want PR 7 with its URL", got.PR)
+			}
+			if got.ReviewNow.Decision != tt.decision || !strings.Contains(got.ReviewNow.Reason, tt.reason) {
+				t.Errorf("review_now = %+v, want %s with %q", got.ReviewNow, tt.decision, tt.reason)
+			}
+		})
 	}
 }

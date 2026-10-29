@@ -68,7 +68,7 @@ Signals for a PR or a branch range:
 - risk by universal path rules, first match wins: read first (migrations and schema files, CI and infra, auth/permissions/sessions/tokens and `.env*` by name, dependency manifests, exports with importers outside the diff), tests before the code they test, skip (lockfiles, snapshots, generated and `dist/` output), skim (anything else). A sensitive file no rule covers is marked `judged`. No per-repo rules file;
 - CODEOWNERS owners;
 - reach: who imports what changed, outside the diff;
-- review now or hand back, first match wins: another open PR changes the same files (possible duplicate); over 400 changed lines, generated excluded (suggest a split); no description, or no linked issue and no stated purpose (ask for intent); otherwise review;
+- review now or hand back, first match wins: another open PR changes at least half of the same files (possible duplicate); over 400 changed lines, generated excluded (suggest a split); no description, or no linked issue and no stated purpose, under 10 words once template comments, headings and checkboxes are removed (ask for intent); otherwise review. If the open PRs cannot be listed, the duplicate rule is skipped with a warning;
 - reading order (read first / skim / skip), with the reason per file;
 - "since your last look": only what changed since the last mapped SHA.
 
