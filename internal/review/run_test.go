@@ -86,6 +86,7 @@ type fakeRun struct {
 	review   func(prompt string) (string, error)
 	relocate string
 	refute   string
+	claims   string
 	mu       sync.Mutex
 	reqs     []agent.Request
 }
@@ -100,6 +101,8 @@ func (f *fakeRun) input(plan Result) RunInput {
 			return f.relocate, nil
 		case filterSystem:
 			return f.refute, nil
+		case claimsSystem:
+			return f.claims, nil
 		}
 		return f.review(req.Prompt)
 	}}
@@ -449,5 +452,28 @@ func TestRunMergesDuplicatesAcrossGroups(t *testing.T) {
 	}
 	if f.count(filterSystem) != 1 {
 		t.Errorf("refuter calls = %d, want 1: the blocking survivor faces the refuter", f.count(filterSystem))
+	}
+}
+
+func TestRunChecksTheDescriptionAlongsideTheGroups(t *testing.T) {
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}), nil
+			}
+			return answer([]string{"src/cart.ts"}), nil
+		},
+		claims: `{"results":[{"id":0,"claim":"Tax is faster","outcome":"not_judgeable"}]}`,
+	}
+	in := f.input(runPlan(Options{}))
+	in.Sentences = []string{"Tax is faster."}
+	in.ClaimPatches = map[string]string{"lib/tax.ts": runTaxPatch}
+	out := Run(context.Background(), in)
+	want := []ClaimCheck{{Sentence: "Tax is faster.", Claim: "Tax is faster", Outcome: ClaimNotJudgeable}}
+	if f.count(claimsSystem) != 1 || !reflect.DeepEqual(out.Claims, want) || out.Usage.Calls != 3 {
+		t.Errorf("claim runs = %d, claims = %+v, calls = %d; want 1 run, %+v and 3 calls", f.count(claimsSystem), out.Claims, out.Usage.Calls, want)
+	}
+	if out := Run(context.Background(), f.input(runPlan(Options{}))); out.Claims != nil || f.count(claimsSystem) != 1 {
+		t.Errorf("claims = %+v without sentences, want no claim run", out.Claims)
 	}
 }

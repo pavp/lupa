@@ -19,4 +19,10 @@ const (
 		`"citation":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"quote":{"type":"string"}},` +
 		`"required":["file","line","quote"],"additionalProperties":false}},` +
 		`"required":["id","outcome"],"additionalProperties":false}}},"required":["results"],"additionalProperties":false}`
+
+	claimsSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{` +
+		`"id":{"type":"integer"},"claim":{"type":"string"},` +
+		`"outcome":{"type":"string","enum":["supported","unsupported","not_judgeable"]},` +
+		`"file":{"type":"string"},"quote":{"type":"string"}},` +
+		`"required":["id","claim","outcome"],"additionalProperties":false}}},"required":["results"],"additionalProperties":false}`
 )

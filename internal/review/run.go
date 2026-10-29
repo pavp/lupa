@@ -26,6 +26,9 @@ type RunInput struct {
 	Head        func(path string) (string, bool)
 	// Parallel bounds how many groups are reviewed at once; zero means DefaultParallel, below one means one.
 	Parallel int
+	// Sentences of the PR description to check against ClaimPatches, the patches of the files a claim may cite.
+	Sentences    []string
+	ClaimPatches map[string]string
 }
 
 // DefaultParallel is how many reviewer runs go at once when RunInput.Parallel is zero.
@@ -55,8 +58,10 @@ type Usage struct {
 }
 
 // RunOutput is the verified review: the findings that stay, the refuted ones, the dropped comments,
-// the plan's coverage ledger updated by the run, the usage and the filter's notes.
+// the plan's coverage ledger updated by the run, the usage, the filter's and claim check's notes, and
+// the description's claims as checked, nil when there was no sentence to check.
 type RunOutput struct {
+	Claims   []ClaimCheck
 	Findings []Anchored
 	Refuted  []RefutedFinding
 	Dropped  []Drop
@@ -77,6 +82,16 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	results := make([]groupResult, len(in.Plan.Groups))
 	limit := make(chan struct{}, max(1, cmp.Or(in.Parallel, DefaultParallel)))
 	var wg sync.WaitGroup
+	var claims ClaimsResult
+	if len(in.Sentences) > 0 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			limit <- struct{}{}
+			defer func() { <-limit }()
+			claims = CheckClaims(ctx, ClaimsInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Sentences: in.Sentences, Patches: in.ClaimPatches})
+		}()
+	}
 	for i, g := range in.Plan.Groups {
 		wg.Add(1)
 		go func() {
@@ -114,6 +129,8 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 		out.Notes = append(out.Notes, filtered.Note)
 	}
 	out.Notes = append(out.Notes, filtered.Notes...)
+	out.Claims = claims.Checks
+	out.Notes = append(out.Notes, claims.Notes...)
 	return out
 }
 
