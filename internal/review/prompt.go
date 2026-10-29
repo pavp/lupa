@@ -90,6 +90,8 @@ func (d block) title() string {
 		return "# Comment whose quote was not found"
 	case "patch":
 		return "# Patch of the comment's file"
+	case "finding":
+		return "# Finding to check"
 	default:
 		return "# Change"
 	}
