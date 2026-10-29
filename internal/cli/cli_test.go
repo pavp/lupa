@@ -114,6 +114,41 @@ func TestMapBinaryFile(t *testing.T) {
 	}
 }
 
+func TestMapClassifiesAndExcludesGenerated(t *testing.T) {
+	dir, _, _ := newRepo(t)
+	gitCmd(t, dir, "switch", "-q", "feature")
+	write(t, dir, "package-lock.json", "{\n\"lockfileVersion\": 3\n}\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "lock")
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got struct {
+		Files []struct {
+			Path   string `json:"path"`
+			Class  string `json:"class"`
+			Risk   string `json:"risk"`
+			Reason string `json:"reason"`
+		} `json:"files"`
+		Size struct {
+			Files          int `json:"files"`
+			Changed        int `json:"changed"`
+			GeneratedFiles int `json:"generated_files"`
+		} `json:"size"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Size.Files != 2 || got.Size.Changed != 6 || got.Size.GeneratedFiles != 1 {
+		t.Errorf("size = %+v, want 2 files, 6 changed lines, 1 generated file", got.Size)
+	}
+	lock := got.Files[2]
+	if lock.Path != "package-lock.json" || lock.Class != "skip" || lock.Risk != "none" || lock.Reason != "lockfile" {
+		t.Errorf("lockfile = %+v, want class skip, risk none, reason lockfile", lock)
+	}
+}
+
 func TestMapText(t *testing.T) {
 	dir, _, _ := newRepo(t)
 	code, stdout, stderr := lupa(dir, "map", "feature")
