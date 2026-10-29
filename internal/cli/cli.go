@@ -14,6 +14,7 @@ import (
 	"github.com/pavp/lupa/internal/mapping"
 	"github.com/pavp/lupa/internal/owners"
 	"github.com/pavp/lupa/internal/reach"
+	"github.com/pavp/lupa/internal/report"
 	"github.com/pavp/lupa/internal/store"
 )
 
@@ -107,17 +108,18 @@ func runMap(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	if _, err := st.Save(target, head, append(saved, '\n'), nil); err != nil {
+	saved = append(saved, '\n')
+	md := report.Markdown(signals)
+	dir, err := st.Save(target, head, saved, md)
+	if err != nil {
 		return fmt.Errorf("saving the map: %w", err)
 	}
 
 	if asJSON {
-		enc := json.NewEncoder(env.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(signals)
+		_, err = env.Stdout.Write(saved)
+		return err
 	}
-	_, err = fmt.Fprintf(env.Stdout, "%d files, +%d -%d (%d changed lines)\n",
-		signals.Size.Files, signals.Size.Additions, signals.Size.Deletions, signals.Size.Changed)
+	_, err = fmt.Fprintf(env.Stdout, "%s\nSaved: %s · next time: only what changed since %s\n", md, dir, head[:7])
 	return err
 }
 

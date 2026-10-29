@@ -157,13 +157,24 @@ func TestMapClassifiesAndExcludesGenerated(t *testing.T) {
 }
 
 func TestMapText(t *testing.T) {
-	dir, _, _ := newRepo(t)
+	dir, _, head := newRepo(t)
 	code, stdout, stderr := lupa(dir, "map", "feature")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
-	if want := "2 files, +5 -1 (6 changed lines)\n"; stdout != want {
-		t.Errorf("stdout = %q, want %q", stdout, want)
+	saved := filepath.Join(gitCmd(t, dir, "rev-parse", "--absolute-git-dir"), "lupa", "feature", head[:7])
+	for _, want := range []string{
+		"**Review now? Yes** — 6 changed lines, generated excluded, within 400",
+		"**Reading order**",
+		"Saved: " + saved + " · next time: only what changed since " + head[:7],
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	md, err := os.ReadFile(filepath.Join(saved, "map.md"))
+	if err != nil || !strings.HasPrefix(stdout, string(md)) {
+		t.Errorf("map.md (%v) must be the printed report without the Saved line", err)
 	}
 }
 
