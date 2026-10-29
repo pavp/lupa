@@ -7,9 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ErrNotRepository means the directory is not inside a git work tree.
@@ -124,6 +127,8 @@ func (r Repo) Files(rev string) ([]string, error) {
 
 // BlobReader reads files at one revision through a single `git cat-file --batch` process.
 type BlobReader struct {
+	// mu serializes reads: one cat-file process answers them in order over one pipe.
+	mu    sync.Mutex
 	rev   string
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -148,8 +153,10 @@ func (r Repo) Reader(rev string) (*BlobReader, error) {
 	return &BlobReader{rev: rev, cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}, nil
 }
 
-// Read returns the content of path at the reader's revision.
+// Read returns the content of path at the reader's revision. It is safe for concurrent use.
 func (b *BlobReader) Read(path string) ([]byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if _, err := fmt.Fprintf(b.stdin, "%s:%s\n", b.rev, path); err != nil {
 		return nil, err
 	}
@@ -227,4 +234,53 @@ func (r Repo) FirstChangedLines(base, head string) (map[string]int, error) {
 		}
 	}
 	return lines, nil
+}
+
+// Patches returns the unified diff from base to head per file, keyed by path (the old path for a deletion).
+func (r Repo) Patches(base, head string) (map[string]string, error) {
+	out, err := r.run("-c", "core.quotePath=false", "diff", "--no-renames", "--no-color", "--unified=3", base, head)
+	if err != nil {
+		return nil, err
+	}
+	patches := map[string]string{}
+	for _, p := range strings.SplitAfter(out, "\ndiff --git ") {
+		if !strings.HasPrefix(p, "diff --git ") {
+			p = "diff --git " + p
+		}
+		p = strings.TrimSuffix(p, "diff --git ")
+		// Without renames the header is `diff --git a/<path> b/<path>` with the same path twice, so its
+		// length gives the path even when the path holds spaces.
+		names, _, _ := strings.Cut(strings.TrimPrefix(p, "diff --git "), "\n")
+		if n := (len(names) - 5) / 2; n > 0 {
+			patches[names[2:2+n]] = p
+		}
+	}
+	return patches, nil
+}
+
+// Worktree checks rev out in a detached worktree in a fresh directory outside the repository.
+// remove deletes the worktree and its directory; calling it again does nothing.
+func (r Repo) Worktree(rev string) (dir string, remove func() error, err error) {
+	commit, err := r.Commit(rev)
+	if err != nil {
+		return "", nil, err
+	}
+	parent, err := os.MkdirTemp("", "lupa-review-*")
+	if err != nil {
+		return "", nil, err
+	}
+	dir = filepath.Join(parent, "tree")
+	if _, err := r.run("worktree", "add", "--detach", "--quiet", dir, commit); err != nil {
+		return "", nil, errors.Join(err, os.RemoveAll(parent))
+	}
+	removed := false
+	remove = func() error {
+		if removed {
+			return nil
+		}
+		removed = true
+		_, err := r.run("worktree", "remove", "--force", dir)
+		return errors.Join(err, os.RemoveAll(parent))
+	}
+	return dir, remove, nil
 }

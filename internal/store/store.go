@@ -30,6 +30,16 @@ func (s Store) Save(key, head string, signals, report []byte) (string, error) {
 	return dir, os.WriteFile(filepath.Join(s.Root, slug(key), lastFile), []byte(head+"\n"), 0o644)
 }
 
+// Put writes data as the file name beside the map of key at head, and returns its path.
+func (s Store) Put(key, head, name string, data []byte) (string, error) {
+	dir := filepath.Join(s.Root, slug(key), short(head))
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	p := filepath.Join(dir, name)
+	return p, os.WriteFile(p, data, 0o644)
+}
+
 // Last returns the head of the last saved map of key.
 func (s Store) Last(key string) (string, bool) {
 	b, err := os.ReadFile(filepath.Join(s.Root, slug(key), lastFile))

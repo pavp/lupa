@@ -16,6 +16,21 @@ type Graph struct {
 	Unresolved []Unresolved        `json:"unresolved"`
 }
 
+// DirectImporters returns the files that import file themselves, sorted.
+func (g Graph) DirectImporters(file string) []string {
+	var out []string
+	for from, tos := range g.Imports {
+		for _, to := range tos {
+			if to == file && from != file {
+				out = append(out, from)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
 // Importers returns every file that reaches file through one or more imports, sorted.
 func (g Graph) Importers(file string) []string {
 	reverse := map[string][]string{}
