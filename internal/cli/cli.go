@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/pavp/lupa/internal/git"
@@ -15,10 +16,11 @@ import (
 	"github.com/pavp/lupa/internal/owners"
 	"github.com/pavp/lupa/internal/reach"
 	"github.com/pavp/lupa/internal/report"
+	"github.com/pavp/lupa/internal/review"
 	"github.com/pavp/lupa/internal/store"
 )
 
-const usage = "usage: lupa map <base>..<head> | <branch> [--json]"
+const usage = "usage: lupa map <base>..<head> | <branch> [--json]\n       lupa review <base>..<head> | <branch> [--plan] [--yes] [--json]"
 
 // Env is what a command reads and writes: the working directory and the output streams.
 type Env struct {
@@ -53,45 +55,50 @@ func run(args []string, env Env) error {
 	switch args[0] {
 	case "map":
 		return runMap(args[1:], env)
+	case "review":
+		return runReview(args[1:], env)
 	default:
 		return usageError{fmt.Sprintf("unknown command %q", args[0])}
 	}
 }
 
-func runMap(args []string, env Env) error {
-	var target string
-	asJSON := false
+// parseArgs reads one target and the given boolean flags; any other flag or argument is a usage error.
+func parseArgs(args []string, flags map[string]*bool) (target string, err error) {
 	for _, a := range args {
 		switch {
-		case a == "--json":
-			asJSON = true
+		case flags[a] != nil:
+			*flags[a] = true
 		case strings.HasPrefix(a, "-"):
-			return usageError{fmt.Sprintf("unknown flag %q", a)}
+			return "", usageError{fmt.Sprintf("unknown flag %q", a)}
 		case target != "":
-			return usageError{fmt.Sprintf("unexpected argument %q", a)}
+			return "", usageError{fmt.Sprintf("unexpected argument %q", a)}
 		default:
 			target = a
 		}
 	}
 	if target == "" {
-		return usageError{"missing target"}
+		return "", usageError{"missing target"}
 	}
+	return target, nil
+}
 
+// mapChange resolves the target to a commit range and builds the map's signals for it.
+func mapChange(env Env, target string) (git.Repo, mapping.Signals, error) {
 	repo := git.Repo{Dir: env.Dir}
 	if err := repo.Check(); err != nil {
-		return fmt.Errorf("%w: %s", err, env.Dir)
+		return repo, mapping.Signals{}, fmt.Errorf("%w: %s", err, env.Dir)
 	}
 	base, head, err := resolveRange(repo, target)
 	if err != nil {
-		return err
+		return repo, mapping.Signals{}, err
 	}
 	changes, err := repo.NumStat(base, head)
 	if err != nil {
-		return err
+		return repo, mapping.Signals{}, err
 	}
 	firstLines, err := repo.FirstChangedLines(base, head)
 	if err != nil {
-		return err
+		return repo, mapping.Signals{}, err
 	}
 	files := make([]mapping.File, len(changes))
 	for i, c := range changes {
@@ -99,9 +106,22 @@ func runMap(args []string, env Env) error {
 	}
 	r, err := reachOf(repo, head, files)
 	if err != nil {
+		return repo, mapping.Signals{}, err
+	}
+	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files)}), nil
+}
+
+func runMap(args []string, env Env) error {
+	asJSON := false
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON})
+	if err != nil {
 		return err
 	}
-	signals := mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files)})
+	repo, signals, err := mapChange(env, target)
+	if err != nil {
+		return err
+	}
+	head := signals.Head
 	gitDir, err := repo.GitDir()
 	if err != nil {
 		return err
@@ -125,6 +145,81 @@ func runMap(args []string, env Env) error {
 	}
 	_, err = fmt.Fprintf(env.Stdout, "%s\nSaved: %s · next time: only what changed since %s\n", md, dir, head[:7])
 	return err
+}
+
+// planJSON is the shape written by `lupa review --plan --json`.
+type planJSON struct {
+	Schema string `json:"schema"`
+	Base   string `json:"base"`
+	Head   string `json:"head"`
+	review.Result
+}
+
+func runReview(args []string, env Env) error {
+	asJSON, planOnly := false, false
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": new(bool)})
+	if err != nil {
+		return err
+	}
+	if !planOnly {
+		return errors.New("the agent review is not available yet; use --plan")
+	}
+	repo, signals, err := mapChange(env, target)
+	if err != nil {
+		return err
+	}
+	patches, err := repo.Patches(signals.Base, signals.Head)
+	if err != nil {
+		return err
+	}
+	plan := review.Plan(signals.Files, patches, review.Options{})
+	if asJSON {
+		out, err := json.MarshalIndent(planJSON{Schema: "lupa.plan/v0", Base: signals.Base, Head: signals.Head, Result: plan}, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = env.Stdout.Write(append(out, '\n'))
+		return err
+	}
+	_, err = io.WriteString(env.Stdout, planText(plan, target))
+	return err
+}
+
+func planText(p review.Result, target string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Plan: %d groups, %d agent runs, about %d tokens (estimate)\n", len(p.Groups), p.Estimate.Runs, p.Estimate.Tokens)
+	for _, g := range p.Groups {
+		fmt.Fprintf(&b, "\nGroup %d (%d bytes)\n", g.ID, g.Bytes)
+		for _, part := range g.Parts {
+			fmt.Fprintf(&b, "  %s", part.Path)
+			if len(part.Hunks) > 0 {
+				lines := make([]string, len(part.Hunks))
+				for i, h := range part.Hunks {
+					lines[i] = strconv.Itoa(h)
+				}
+				fmt.Fprintf(&b, " (hunks at lines %s)", strings.Join(lines, ", "))
+			}
+			b.WriteString("\n")
+		}
+	}
+	for _, s := range []struct {
+		status review.Status
+		title  string
+	}{{review.Skipped, "Skipped"}, {review.NotReviewed, "Not reviewed"}} {
+		header := false
+		for _, e := range p.Ledger {
+			if e.Status != s.status {
+				continue
+			}
+			if !header {
+				fmt.Fprintf(&b, "\n%s:\n", s.title)
+				header = true
+			}
+			fmt.Fprintf(&b, "  %s: %s\n", e.Path, e.Reason)
+		}
+	}
+	fmt.Fprintf(&b, "\nRead the change first (recommended): lupa map %s\nThen run the agent review: lupa review %s --yes\n", target, target)
+	return b.String()
 }
 
 // reachOf builds the import graph at head and keeps, per changed file, its importers outside the change
