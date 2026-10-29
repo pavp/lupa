@@ -106,6 +106,7 @@ func TestReviewErrors(t *testing.T) {
 		stderr string
 	}{
 		{"no plan flag", []string{"review", "feature"}, "lupa: the agent review is not available yet; use --plan\n"},
+		{"the yes flag the plan suggests", []string{"review", "feature", "--yes"}, "lupa: the agent review is not available yet; use --plan\n"},
 		{"unknown flag", []string{"review", "feature", "--plan", "--bogus"}, "unknown flag \"--bogus\""},
 		{"missing target", []string{"review", "--plan"}, "missing target"},
 	}
