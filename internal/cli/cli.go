@@ -668,7 +668,7 @@ func remoteOf(repo git.Repo, ref github.Ref) (string, error) {
 		return "", err
 	}
 	for _, name := range slices.Sorted(maps.Keys(remotes)) {
-		if github.SameRepo(remotes[name], ref) {
+		if slices.ContainsFunc(remotes[name], func(url string) bool { return github.SameRepo(url, ref) }) {
 			return name, nil
 		}
 	}
@@ -691,8 +691,20 @@ func cacheClone(env Env, ref github.Ref) (git.Repo, error) {
 		if err := os.MkdirAll(filepath.Dir(dir), 0o755); err != nil {
 			return git.Repo{}, err
 		}
-		if err := git.CloneBlobless(fmt.Sprintf("https://%s/%s/%s.git", ref.Host, ref.Owner, ref.Repo), dir); err != nil {
+		// Cloning beside the target and renaming it in place means an interrupted clone is never reused,
+		// and of two runs cloning at once, the second keeps the first's clone.
+		tmp, err := os.MkdirTemp(filepath.Dir(dir), ".clone-*")
+		if err != nil {
 			return git.Repo{}, err
+		}
+		defer os.RemoveAll(tmp)
+		if err := git.CloneBlobless(fmt.Sprintf("https://%s/%s/%s.git", ref.Host, ref.Owner, ref.Repo), filepath.Join(tmp, "repo")); err != nil {
+			return git.Repo{}, err
+		}
+		if err := os.Rename(filepath.Join(tmp, "repo"), dir); err != nil {
+			if _, statErr := os.Stat(dir); statErr != nil {
+				return git.Repo{}, err
+			}
 		}
 	}
 	repo := git.Repo{Dir: dir}

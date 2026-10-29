@@ -333,3 +333,19 @@ func TestReviewPlanCountsTheClaimCheck(t *testing.T) {
 		t.Errorf("runs = %d with a prose description, %d with every claim found; want one more for the claim check", prose, cited)
 	}
 }
+
+func TestCacheCloneLeavesNothingBehindWhenItFails(t *testing.T) {
+	cache := t.TempDir()
+	forge := prForge("abc")
+	forge.pr.Ref.Host = "127.0.0.1:1"
+	var out, errOut bytes.Buffer
+	code := Run([]string{"map", "https://127.0.0.1:1/acme/shop/pull/7"}, Env{Dir: t.TempDir(), Stdout: &out, Stderr: &errOut, Forge: forge, CacheDir: cache})
+	if code == 0 {
+		t.Fatalf("exit 0 cloning from a closed port")
+	}
+	left, _ := filepath.Glob(filepath.Join(cache, "*", "*", "*"))
+	hidden, _ := filepath.Glob(filepath.Join(cache, "*", "*", ".*"))
+	if len(left)+len(hidden) != 0 {
+		t.Errorf("a failed clone left %v %v; a later run would reuse it", left, hidden)
+	}
+}

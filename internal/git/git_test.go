@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -203,4 +204,17 @@ func TestBlobReaderIsSafeForConcurrentReads(t *testing.T) {
 		}
 	}
 	wg.Wait()
+}
+
+func TestRemotesApplyURLRewrites(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q")
+	gitCmd(t, dir, "remote", "add", "origin", "gh:pavp/lupa")
+	gitCmd(t, dir, "remote", "add", "plain", "git@github.com:acme/shop.git")
+	gitCmd(t, dir, "config", "url.https://github.com/.insteadOf", "gh:")
+	got, err := Repo{Dir: dir}.Remotes()
+	want := map[string][]string{"origin": {"gh:pavp/lupa", "https://github.com/pavp/lupa"}, "plain": {"git@github.com:acme/shop.git"}}
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("remotes = %v (%v), want %v: the raw URL, then the rewritten one when it differs", got, err, want)
+	}
 }

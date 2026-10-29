@@ -199,3 +199,34 @@ func TestClaimChunksSplitAFileAtItsHunks(t *testing.T) {
 		}
 	}
 }
+
+func TestIsComment(t *testing.T) {
+	for line, want := range map[string]bool{
+		"// note": true, "# note": true, "#": true, "/* note": true, "* note": true, "*/": true, "<!-- note -->": true, "-- note": true,
+		"*p = 1;": false, "#count = 0;": false, "--flag": false, "#!/bin/sh": true,
+	} {
+		if got := isComment(line); got != want {
+			t.Errorf("isComment(%q) = %v, want %v", line, got, want)
+		}
+	}
+}
+
+func TestCheckClaimsQuoteRules(t *testing.T) {
+	const patch = "diff --git a/cli.ts b/cli.ts\n--- a/cli.ts\n+++ b/cli.ts\n@@ -1,1 +1,3 @@\n+--verbose\n+}\n x\n"
+	cases := []struct{ name, quote, outcome string }{
+		{"a line made only of punctuation supports nothing", "}", ClaimUnsupported},
+		{"only one diff marker is taken off a quote", "+--verbose", ClaimSupported},
+		{"a quote that is the marker-stripped text is not trimmed further", "verbose", ClaimUnsupported},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &agent.Fake{Reply: func(agent.Request) (string, error) {
+				return `{"results":[{"id":0,"claim":"Adds a flag","outcome":"supported","file":"cli.ts","quote":"` + c.quote + `"}]}`, nil
+			}}
+			res := CheckClaims(context.Background(), ClaimsInput{Agent: fake, Sentences: []string{"Adds a flag."}, Patches: map[string]string{"cli.ts": patch}})
+			if got := res.Checks[0].Outcome; got != c.outcome {
+				t.Errorf("outcome = %s, want %s", got, c.outcome)
+			}
+		})
+	}
+}
