@@ -231,21 +231,23 @@ func TestMapReach(t *testing.T) {
 			Class     string   `json:"class"`
 			Reason    string   `json:"reason"`
 			Importers []string `json:"importers"`
+			FirstLine int      `json:"first_line"`
 		} `json:"files"`
 		Unresolved []struct {
 			From      string `json:"from"`
 			Specifier string `json:"specifier"`
+			Line      int    `json:"line"`
 		} `json:"unresolved"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 		t.Fatal(err)
 	}
 	badge := got.Files[0]
-	if badge.Path != "src/Badge.ts" || badge.Class != "read-first" || badge.Reason != "imported by 2 files outside this change" ||
+	if badge.FirstLine != 1 || badge.Path != "src/Badge.ts" || badge.Class != "read-first" || badge.Reason != "imported by 2 files outside this change" ||
 		strings.Join(badge.Importers, ",") != "src/a.ts,src/index.ts" {
 		t.Errorf("Badge = %+v, want read-first, importers src/a.ts and src/index.ts (src/b.ts is in the change)", badge)
 	}
-	if len(got.Unresolved) != 1 || got.Unresolved[0].From != "src/Badge.ts" || got.Unresolved[0].Specifier != "./missing" {
+	if len(got.Unresolved) != 1 || got.Unresolved[0].From != "src/Badge.ts" || got.Unresolved[0].Specifier != "./missing" || got.Unresolved[0].Line != 1 {
 		t.Errorf("unresolved = %+v, want ./missing from src/Badge.ts", got.Unresolved)
 	}
 }

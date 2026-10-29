@@ -31,10 +31,12 @@ func Markdown(s mapping.Signals) []byte {
 
 	b.WriteString("**Risk** (worst first)\n")
 	var oneWay, tests, code []string
+	var oneWayAt []string
 	for _, f := range s.Files {
 		switch {
 		case f.Risk == mapping.OneWayDoor:
 			oneWay = append(oneWay, f.Path)
+			oneWayAt = append(oneWayAt, at(f.Path, f.FirstLine))
 		case f.Class == mapping.Test:
 			tests = append(tests, f.Path)
 		}
@@ -85,17 +87,17 @@ func Markdown(s mapping.Signals) []byte {
 	}
 
 	var questions []string
-	for _, p := range oneWay {
+	for _, p := range oneWayAt {
 		questions = append(questions, fmt.Sprintf("`%s` is hard to roll back: what is the rollback plan?", p))
 	}
 	for _, f := range s.Files {
 		if len(f.Importers) > 0 {
 			questions = append(questions, fmt.Sprintf("`%s` is imported by %d %s outside this change: were they checked?",
-				f.Path, len(f.Importers), plural(len(f.Importers), "file", "files")))
+				at(f.Path, f.FirstLine), len(f.Importers), plural(len(f.Importers), "file", "files")))
 		}
 	}
 	for _, u := range s.Unresolved {
-		questions = append(questions, fmt.Sprintf("`%s` imports `%s`, which is not in the repo: is a file missing from this change?", u.From, u.Specifier))
+		questions = append(questions, fmt.Sprintf("`%s` imports `%s`, which is not in the repo: is a file missing from this change?", at(u.From, u.Line), u.Specifier))
 	}
 	if len(tests) == 0 && len(code) > 0 {
 		questions = append(questions, "No test file changed: how was this change verified?")
@@ -138,4 +140,12 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// at formats a file:line reference; a file without a known line stays a bare path.
+func at(path string, line int) string {
+	if line > 0 {
+		return fmt.Sprintf("%s:%d", path, line)
+	}
+	return path
 }

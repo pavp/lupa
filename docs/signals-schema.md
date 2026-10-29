@@ -10,6 +10,7 @@
 | `files[].path` | string | Repo-relative path. Renames appear as a deletion plus an addition. |
 | `files[].additions`, `files[].deletions` | number | Line counts; `0` for binary files. |
 | `files[].binary` | bool, optional | `true` for binary files. |
+| `files[].first_line` | number, optional | First changed line on the head side; absent for a deleted file. |
 | `files[].class` | string | `read-first`, `test`, `skim` or `skip`, from the universal path rules (first match wins). |
 | `files[].risk` | string | `one-way-door`, `impact`, `verification` or `none`. There is no numeric score. |
 | `files[].reason` | string | Why the rule applied, e.g. `migration or schema: hard to roll back`, `imported by 3 files outside this change`. |
@@ -19,6 +20,6 @@
 | `review_now` | object | `decision`: `review` or `hand-back`; `reason`. A change over 400 changed lines, generated excluded, is handed back. |
 | `since_last_look` | object or null | `null` on the first map of a target; else `since` (the last mapped head) and `files` changed since then. |
 | `reading_order[]` | array | `path`, `section` (`read-first`, `skim`, `skip`) and `why`. A test sits right before the file it tests. |
-| `unresolved[]` | array | `from` and `specifier` of imports in changed files that name a repo file lupa could not find. Reach states its limits instead of guessing. |
+| `unresolved[]` | array | `from`, `specifier` and `line` of imports in changed files that name a repo file lupa could not find. Reach states its limits instead of guessing. |
 
 Reach is approximate and language-agnostic: imports are found and resolved by code (relative paths, extensions, directory index, tsconfig `paths`/`baseUrl` with `extends`, workspace packages), never by a model.

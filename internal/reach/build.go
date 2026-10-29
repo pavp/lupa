@@ -1,6 +1,7 @@
 package reach
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 
@@ -31,7 +32,7 @@ func Build(files []string, readFile func(string) ([]byte, error), p lang.Provide
 					targets[to] = true
 				}
 			case lang.Unresolved:
-				g.Unresolved = append(g.Unresolved, Unresolved{From: f, Specifier: spec})
+				g.Unresolved = append(g.Unresolved, Unresolved{From: f, Specifier: spec, Line: lineOf(src, spec)})
 			}
 		}
 		imports := make([]string, 0, len(targets))
@@ -46,4 +47,16 @@ func Build(files []string, readFile func(string) ([]byte, error), p lang.Provide
 		return a.From < b.From || a.From == b.From && a.Specifier < b.Specifier
 	})
 	return g, nil
+}
+
+// lineOf returns the 1-based line where spec first appears quoted in src, or 0.
+func lineOf(src []byte, spec string) int {
+	for i, line := range bytes.Split(src, []byte("\n")) {
+		for _, q := range []string{"'", "\"", "`"} {
+			if bytes.Contains(line, []byte(q+spec+q)) {
+				return i + 1
+			}
+		}
+	}
+	return 0
 }

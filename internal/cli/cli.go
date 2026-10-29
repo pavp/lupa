@@ -89,9 +89,13 @@ func runMap(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
+	firstLines, err := repo.FirstChangedLines(base, head)
+	if err != nil {
+		return err
+	}
 	files := make([]mapping.File, len(changes))
 	for i, c := range changes {
-		files[i] = mapping.File{Path: c.Path, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary}
+		files[i] = mapping.File{Path: c.Path, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary, FirstLine: firstLines[c.Path]}
 	}
 	r, err := reachOf(repo, head, files)
 	if err != nil {
@@ -159,7 +163,7 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 	}
 	for _, u := range g.Unresolved {
 		if inChange[u.From] {
-			out.Unresolved = append(out.Unresolved, mapping.Unresolved{From: u.From, Specifier: u.Specifier})
+			out.Unresolved = append(out.Unresolved, mapping.Unresolved{From: u.From, Specifier: u.Specifier, Line: u.Line})
 		}
 	}
 	return out, nil

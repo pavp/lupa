@@ -13,14 +13,14 @@ func sample() mapping.Input {
 		Head: "hhhhhhhhhh",
 		Files: []mapping.File{
 			{Path: "README.md", Additions: 1},
-			{Path: "db/migrations/001.sql", Additions: 10},
+			{Path: "db/migrations/001.sql", Additions: 10, FirstLine: 1},
 			{Path: "package-lock.json", Additions: 900},
 			{Path: "src/Badge.test.ts", Additions: 5},
-			{Path: "src/Badge.ts", Additions: 3, Deletions: 1},
+			{Path: "src/Badge.ts", Additions: 3, Deletions: 1, FirstLine: 7},
 		},
 		Reach: mapping.Reach{
 			Importers:  map[string][]string{"src/Badge.ts": {"src/a.ts", "src/b.ts"}},
-			Unresolved: []mapping.Unresolved{{From: "src/Badge.ts", Specifier: "./missing"}},
+			Unresolved: []mapping.Unresolved{{From: "src/Badge.ts", Specifier: "./missing", Line: 2}},
 		},
 		Owners: map[string][]string{"src/Badge.ts": {"@ui"}},
 	}
@@ -49,9 +49,9 @@ func TestMarkdown(t *testing.T) {
 		"   - `package-lock.json`: lockfile",
 		"",
 		"**Questions for the author**",
-		"1. `db/migrations/001.sql` is hard to roll back: what is the rollback plan?",
-		"2. `src/Badge.ts` is imported by 2 files outside this change: were they checked?",
-		"3. `src/Badge.ts` imports `./missing`, which is not in the repo: is a file missing from this change?",
+		"1. `db/migrations/001.sql:1` is hard to roll back: what is the rollback plan?",
+		"2. `src/Badge.ts:7` is imported by 2 files outside this change: were they checked?",
+		"3. `src/Badge.ts:2` imports `./missing`, which is not in the repo: is a file missing from this change?",
 		"",
 	}, "\n")
 	if got := string(Markdown(mapping.Build(sample()))); got != want {
