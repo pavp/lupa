@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 )
 
 // ErrNotRepository means the directory is not inside a git work tree.
@@ -126,6 +127,8 @@ func (r Repo) Files(rev string) ([]string, error) {
 
 // BlobReader reads files at one revision through a single `git cat-file --batch` process.
 type BlobReader struct {
+	// mu serializes reads: one cat-file process answers them in order over one pipe.
+	mu    sync.Mutex
 	rev   string
 	cmd   *exec.Cmd
 	stdin io.WriteCloser
@@ -150,8 +153,10 @@ func (r Repo) Reader(rev string) (*BlobReader, error) {
 	return &BlobReader{rev: rev, cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}, nil
 }
 
-// Read returns the content of path at the reader's revision.
+// Read returns the content of path at the reader's revision. It is safe for concurrent use.
 func (b *BlobReader) Read(path string) ([]byte, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if _, err := fmt.Fprintf(b.stdin, "%s:%s\n", b.rev, path); err != nil {
 		return nil, err
 	}

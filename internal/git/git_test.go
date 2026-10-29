@@ -1,10 +1,12 @@
 package git
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -166,4 +168,39 @@ func TestWorktreeUnknownRevLeavesNothingBehind(t *testing.T) {
 	if list := gitCmd(t, repo, "worktree", "list", "--porcelain"); strings.Count(list, "worktree ") != 1 {
 		t.Errorf("worktree registered after a failed add:\n%s", list)
 	}
+}
+
+func TestBlobReaderIsSafeForConcurrentReads(t *testing.T) {
+	repo := t.TempDir()
+	gitCmd(t, repo, "init", "-q", "-b", "main")
+	want := map[string]string{}
+	for i := range 8 {
+		name := fmt.Sprintf("f%d.txt", i)
+		want[name] = strings.Repeat(fmt.Sprintf("line %d\n", i), 4000)
+		if err := os.WriteFile(filepath.Join(repo, name), []byte(want[name]), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	gitCmd(t, repo, "add", ".")
+	gitCmd(t, repo, "commit", "-q", "-m", "files")
+	r, err := Repo{Dir: repo}.Reader("HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	var wg sync.WaitGroup
+	for name, content := range want {
+		for range 5 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				got, err := r.Read(name)
+				if err != nil || string(got) != content {
+					t.Errorf("Read(%s) = %d bytes, err %v; want its %d bytes", name, len(got), err, len(content))
+				}
+			}()
+		}
+	}
+	wg.Wait()
 }
