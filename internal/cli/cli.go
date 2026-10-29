@@ -20,7 +20,7 @@ import (
 	"github.com/pavp/lupa/internal/store"
 )
 
-const usage = "usage: lupa map <base>..<head> | <branch> [--json]\n       lupa review <base>..<head> | <branch> [--plan] [--json]"
+const usage = "usage: lupa map <base>..<head> | <branch> [--json]\n       lupa review <base>..<head> | <branch> [--plan] [--yes] [--json]"
 
 // Env is what a command reads and writes: the working directory and the output streams.
 type Env struct {
@@ -157,7 +157,7 @@ type planJSON struct {
 
 func runReview(args []string, env Env) error {
 	asJSON, planOnly := false, false
-	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly})
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": new(bool)})
 	if err != nil {
 		return err
 	}
