@@ -94,7 +94,7 @@ The quote gate proves a comment is about real code in the diff, not that it is r
 - **Severity rubric**, shared by reviewer and filter: severe only when the change causes it, realistic input reaches it, and it names an observable harm; otherwise at most a warning. Style or suspicion is not a finding. Excluded from the prompt's scope: pre-existing issues, nitpicks, anything a linter catches, general quality or test coverage remarks.
 - **Level derived by code** from severity, evidence class (the quoted lines settle the claim, or it needs inference) and causality. The model never promotes its own comment.
 - **Dedupe by code**: same file, overlapping lines and a similar claim merge into one comment.
-- **Default report cap**: only severe comments, at most 5 per PR; the rest stays in the JSON and shows with `--all`.
+- **No caps in v1**: the report shows every comment that passed the gates, ordered by level, severe first. A count cap would hide verified severe issues; whether any limit is needed is decided by measurement, not up front.
 - **Measured**: precision is the stop criterion; noise that survives these controls stops the project before it reaches real PRs.
 
 ## Language providers
@@ -169,7 +169,7 @@ Fixtures with planted traps cover `lupa map`: claims the diff does not implement
 ## Open decisions
 
 - The signals JSON schema.
-- The default report cap (5 proposed) and the dedupe similarity rule.
+- The dedupe similarity rule.
 - Review prompt and rule set for TypeScript/JavaScript.
 - Report format (markdown only, or markdown plus HTML).
 - Output location: proposed `$(git rev-parse --git-dir)/lupa/<pr-or-branch>/<short-sha>/`.
