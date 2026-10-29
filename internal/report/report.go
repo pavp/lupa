@@ -136,6 +136,8 @@ func evidence(c mapping.Claim) string {
 	parts := make([]string, len(c.Cites))
 	for i, ct := range c.Cites {
 		switch {
+		case ct.NotFoundAsWritten():
+			parts[i] = fmt.Sprintf("`%s` not found as written", ct.Text)
 		case !ct.Found:
 			parts[i] = fmt.Sprintf("`%s` not found", ct.Text)
 		case ct.Side == "":

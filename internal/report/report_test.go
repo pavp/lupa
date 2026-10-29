@@ -120,3 +120,10 @@ func TestClaimEvidenceKeepsBackticksInsideCode(t *testing.T) {
 		t.Errorf("report lacks %q:\n%s", want, got)
 	}
 }
+
+func TestDottedSpanNotFoundAsWritten(t *testing.T) {
+	got := string(Markdown(mapping.Signals{Claims: []mapping.Claim{{Text: "Moves `review_now.reply`", Cites: []mapping.Cite{{Text: "review_now.reply"}}}}}))
+	if want := "`review_now.reply` not found as written"; !strings.Contains(got, want) {
+		t.Errorf("report lacks %q:\n%s", want, got)
+	}
+}

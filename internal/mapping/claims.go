@@ -27,6 +27,17 @@ type Cite struct {
 	Code  string `json:"code,omitempty"`
 }
 
+// NotFoundAsWritten reports a missed span with a dot and no slash, such as a field path a diff spells
+// differently: a search cannot say the claim is false, so `lupa review` asks the model about it.
+func (c Cite) NotFoundAsWritten() bool {
+	return !c.Found && strings.Contains(c.Text, ".") && !strings.Contains(c.Text, "/")
+}
+
+// Unchecked reports whether no search could settle the claim: it is prose, or a cite is not found as written.
+func (c Claim) Unchecked() bool {
+	return len(c.Cites) == 0 || slices.ContainsFunc(c.Cites, Cite.NotFoundAsWritten)
+}
+
 var (
 	codeSpan   = regexp.MustCompile("`([^`]+)`")
 	webLink    = regexp.MustCompile(`https?://\S+`)

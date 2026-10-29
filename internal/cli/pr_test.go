@@ -6,9 +6,12 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/forge/github"
 )
 
@@ -264,5 +267,69 @@ func TestMapPRDescriptionVsDiff(t *testing.T) {
 		if code != 0 || !strings.Contains(stdout, want) {
 			t.Errorf("report lacks %q:\n%s", want, stdout)
 		}
+	}
+}
+
+func TestReviewPRChecksProseClaims(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	clone, _, head := newPRClone(t)
+	forge := prForge(head)
+	forge.pr.Body = "Adds `B` in b.go. Callers read the value faster. Sets `cfg.limit`."
+	var mu sync.Mutex
+	var sent string
+	ag := &agent.Fake{Reply: func(req agent.Request) (string, error) {
+		if strings.Contains(req.Prompt, "For each numbered sentence") {
+			mu.Lock()
+			sent = req.Prompt
+			mu.Unlock()
+			return `{"results":[{"id":0,"claim":"Callers read the value faster","outcome":"not_judgeable"},` +
+				`{"id":1,"claim":"Sets ` + "`cfg.limit`" + `","outcome":"supported","file":"b.go","quote":"var B = 1"}]}`, nil
+		}
+		m := groupPaths.FindStringSubmatch(req.Prompt)
+		return `{"files_inspected": ` + m[1] + `, "comments": []}`, nil
+	}}
+	var out, errOut bytes.Buffer
+	code := Run([]string{"review", "7", "--yes", "--json"}, Env{Dir: clone, Stdout: &out, Stderr: &errOut, Forge: forge, Agent: ag})
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, errOut.String())
+	}
+	if !strings.Contains(sent, "0. Callers read the value faster.\n1. Sets `cfg.limit`.\n") || strings.Contains(sent, "Adds `B`") {
+		t.Errorf("claim check prompt does not carry exactly the prose and not-found-as-written sentences:\n%s", sent)
+	}
+	var got struct {
+		Claims []struct {
+			Sentence, Claim, Outcome, File, Side, Code string
+			Line                                       int
+		} `json:"claims"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := []struct {
+		Sentence, Claim, Outcome, File, Side, Code string
+		Line                                       int
+	}{
+		{"Callers read the value faster.", "Callers read the value faster", "not_judgeable", "", "", "", 0},
+		{"Sets `cfg.limit`.", "Sets `cfg.limit`", "supported", "b.go", "+", "var B = 1", 3},
+	}
+	if !reflect.DeepEqual(got.Claims, want) {
+		t.Errorf("claims = %+v, want %+v", got.Claims, want)
+	}
+}
+
+func TestReviewPlanCountsTheClaimCheck(t *testing.T) {
+	clone, _, head := newPRClone(t)
+	runs := func(body string) int {
+		forge := prForge(head)
+		forge.pr.Body = body
+		code, stdout, stderr := lupaWith(clone, forge, "review", "7", "--plan", "--json")
+		var plan struct{ Estimate struct{ Runs int } }
+		if err := json.Unmarshal([]byte(stdout), &plan); code != 0 || err != nil {
+			t.Fatalf("exit %d, %v, stderr %s", code, err, stderr)
+		}
+		return plan.Estimate.Runs
+	}
+	if cited, prose := runs("Adds `B` so that callers can read the new value without parsing a file."), runs("Adds B so that callers can read the new value without parsing the text file."); prose != cited+1 {
+		t.Errorf("runs = %d with a prose description, %d with every claim found; want one more for the claim check", prose, cited)
 	}
 }

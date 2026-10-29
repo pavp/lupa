@@ -208,6 +208,17 @@ type reviewJSON struct {
 	Ledger   []review.Entry `json:"ledger"`
 	Usage    usageJSON      `json:"usage"`
 	Notes    []string       `json:"notes"`
+	Claims   []claimJSON    `json:"claims"`
+}
+
+type claimJSON struct {
+	Sentence string `json:"sentence"`
+	Claim    string `json:"claim"`
+	Outcome  string `json:"outcome"`
+	File     string `json:"file,omitempty"`
+	Side     string `json:"side,omitempty"`
+	Line     int    `json:"line,omitempty"`
+	Code     string `json:"code,omitempty"`
 }
 
 type findingJSON struct {
@@ -260,6 +271,10 @@ func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 	for _, f := range out.Findings {
 		r.Findings = append(r.Findings, findingJSONOf(f))
 	}
+	for _, c := range out.Claims {
+		r.Claims = append(r.Claims, claimJSON{Sentence: report.Redact(c.Sentence), Claim: report.Redact(c.Claim), Outcome: c.Outcome,
+			File: c.File, Side: c.Side, Line: c.Line, Code: report.Redact(c.Code)})
+	}
 	for _, f := range out.Refuted {
 		citation := f.Citation
 		citation.Quote = report.Redact(citation.Quote)
@@ -299,6 +314,13 @@ func runReview(args []string, env Env) error {
 	conventions := conventionsOf(repo, signals.Base)
 	empty := review.BuildPrompt(review.PromptInput{Conventions: conventions})
 	plan := review.Plan(signals.Files, patches, review.Options{Overhead: len(empty.System) + len(empty.User)})
+	sentences, claimPatches := uncheckedClaims(signals, patches)
+	if len(sentences) > 0 {
+		plan.Estimate.Runs += review.ClaimRuns(claimPatches)
+		for _, p := range claimPatches {
+			plan.Estimate.Tokens += len(p) / 4
+		}
+	}
 	if planOnly && asJSON {
 		out, err := json.MarshalIndent(planJSON{Schema: "lupa.plan/v0", Base: signals.Base, Head: signals.Head, Result: plan}, "", "  ")
 		if err != nil {
@@ -335,7 +357,8 @@ func runReview(args []string, env Env) error {
 			importers[f.Path] = f.Importers
 		}
 	}
-	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Conventions: conventions, Agent: ag})
+	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Conventions: conventions, Agent: ag,
+		Sentences: sentences, ClaimPatches: claimPatches})
 	if err != nil {
 		return err
 	}
@@ -366,6 +389,27 @@ func runReview(args []string, env Env) error {
 		err = errNothingReviewed
 	}
 	return err
+}
+
+// uncheckedClaims returns the description sentences a search could not settle, and the patches of the
+// files they may cite: every changed file but the generated ones.
+func uncheckedClaims(signals mapping.Signals, patches map[string]string) ([]string, map[string]string) {
+	var sentences []string
+	for _, c := range signals.Claims {
+		if c.Unchecked() {
+			sentences = append(sentences, c.Text)
+		}
+	}
+	if len(sentences) == 0 {
+		return nil, nil
+	}
+	cited := map[string]string{}
+	for _, f := range signals.Files {
+		if p, ok := patches[f.Path]; ok && f.Class != mapping.Skip {
+			cited[f.Path] = p
+		}
+	}
+	return sentences, cited
 }
 
 // confirm asks whether to run the agent review now; only y or yes runs it, and end of input does not.

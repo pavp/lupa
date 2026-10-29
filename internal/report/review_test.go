@@ -201,3 +201,36 @@ func TestReviewShowsRunNotesAndRedactsReasons(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewDescriptionVsDiff(t *testing.T) {
+	got := string(Review(ReviewInput{Out: review.RunOutput{Claims: []review.ClaimCheck{
+		{Sentence: "Login reads the cache.", Outcome: review.ClaimSupported, File: "src/login.ts", Side: "+", Line: 4, Code: "get(id)"},
+		{Sentence: "Adds retries.", Outcome: review.ClaimUnsupported},
+		{Sentence: "Login is faster.", Outcome: review.ClaimNotJudgeable},
+		{Sentence: "Drops v1.", Outcome: review.ClaimNotChecked},
+	}}}))
+	for _, want := range []string{
+		"### Description vs diff (prose claims)\n\n",
+		"- \"Login reads the cache.\": supported by `src/login.ts:4` (`+get(id)`)\n",
+		"- \"Adds retries.\": no supporting line in the diff\n",
+		"- \"Login is faster.\": cannot be judged from a diff\n",
+		"- \"Drops v1.\": not checked\n",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("review lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "verified") {
+		t.Errorf("review says verified:\n%s", got)
+	}
+}
+
+func TestReviewShortensALongCitedLine(t *testing.T) {
+	long := strings.Repeat("a", 200)
+	got := string(Review(ReviewInput{Out: review.RunOutput{Claims: []review.ClaimCheck{
+		{Sentence: "Docs say so.", Outcome: review.ClaimSupported, File: "docs/design.md", Side: "+", Line: 75, Code: long},
+	}}}))
+	if want := "(`+" + strings.Repeat("a", 118) + "…`)"; !strings.Contains(got, want) || strings.Contains(got, long) {
+		t.Errorf("review does not shorten the cited line to 120 characters:\n%s", got)
+	}
+}
