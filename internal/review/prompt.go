@@ -57,20 +57,25 @@ func BuildPrompt(in PromptInput) Prompt {
 		data = append(data, block{"hints", hints})
 	}
 	data = append(data, block{"change", in.Patch})
-	nonce := dataNonce(data)
 
 	paths, _ := json.Marshal(in.Paths)
 	var b strings.Builder
 	b.WriteString(taskSection)
 	fmt.Fprintf(&b, "The paths of this group, for files_inspected: %s\n", paths)
+	writeBlocks(&b, data)
+	return Prompt{System: systemPrompt, User: b.String()}
+}
+
+// writeBlocks appends each block under its title, fenced by one nonce that no block contains.
+func writeBlocks(b *strings.Builder, data []block) {
+	nonce := dataNonce(data)
 	for _, d := range data {
-		fmt.Fprintf(&b, "\n%s\n<<<LUPA-DATA %s %s\n%s", d.title(), d.kind, nonce, d.body)
+		fmt.Fprintf(b, "\n%s\n<<<LUPA-DATA %s %s\n%s", d.title(), d.kind, nonce, d.body)
 		if !strings.HasSuffix(d.body, "\n") {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "LUPA-DATA %s %s>>>\n", d.kind, nonce)
+		fmt.Fprintf(b, "LUPA-DATA %s %s>>>\n", d.kind, nonce)
 	}
-	return Prompt{System: systemPrompt, User: b.String()}
 }
 
 type block struct{ kind, body string }
@@ -81,6 +86,10 @@ func (d block) title() string {
 		return "# Repository conventions (from the base branch)"
 	case "hints":
 		return "# Hints: importers outside the change (a starting point, not exhaustive)"
+	case "comment":
+		return "# Comment whose quote was not found"
+	case "patch":
+		return "# Patch of the comment's file"
 	default:
 		return "# Change"
 	}
