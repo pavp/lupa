@@ -81,7 +81,7 @@ func TestReview(t *testing.T) {
 		"Why it matters: anyone with the repo reads the key",
 		"",
 		"```",
-		`const api_key = "abcd1234efgh"`,
+		`const api_key = "‹redacted›"`,
 		"```",
 		"",
 		"Fix: Read it from the environment",
@@ -166,5 +166,21 @@ func TestReviewNoFindings(t *testing.T) {
 	}, "\n")
 	if got := string(Review(in)); got != want {
 		t.Errorf("Review() mismatch\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+}
+
+func TestReviewRedactsEveryField(t *testing.T) {
+	in := sampleReview()
+	in.Out.Findings = []review.Anchored{finding(verify.LevelBlocking, verify.CausalityIntroduced, "a.ts", 1, 1, verify.Comment{
+		Claim: "Leaks ghp_" + strings.Repeat("a", 36), Mechanism: "logs AKIAABCDEFGHIJKLMNOP", Fix: "rotate sk-" + strings.Repeat("b", 24),
+		Quote: "password: hunter2hunter2"})}
+	got := string(Review(in))
+	for _, leak := range []string{"ghp_aaa", "AKIAABCD", "sk-bbb", "hunter2"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q leaked:\n%s", leak, got)
+		}
+	}
+	if !strings.Contains(got, "password: ‹redacted›") {
+		t.Errorf("the key name is not kept:\n%s", got)
 	}
 }

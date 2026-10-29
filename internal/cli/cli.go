@@ -226,10 +226,13 @@ func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 		r.Findings = append(r.Findings, findingJSONOf(f))
 	}
 	for _, f := range out.Refuted {
-		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Citation: f.Citation})
+		citation := f.Citation
+		citation.Quote = report.Redact(citation.Quote)
+		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Citation: citation})
 	}
 	for _, d := range out.Dropped {
-		r.Dropped = append(r.Dropped, droppedJSON{Stage: d.Stage, Group: d.Group, Reason: d.Reason, File: d.Comment.File, Claim: d.Comment.Claim, Quote: d.Comment.Quote})
+		r.Dropped = append(r.Dropped, droppedJSON{Stage: d.Stage, Group: d.Group, Reason: d.Reason, File: d.Comment.File,
+			Claim: report.Redact(d.Comment.Claim), Quote: report.Redact(d.Comment.Quote)})
 	}
 	if r.Ledger == nil {
 		r.Ledger = []review.Entry{}
@@ -240,7 +243,8 @@ func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 func findingJSONOf(a review.Anchored) findingJSON {
 	f, c := a.Finding, a.Finding.Comment
 	return findingJSON{File: f.Location.File, Side: f.Location.Side, Start: f.Location.Start, End: f.Location.End, Severity: c.Severity,
-		Level: f.Level, Causality: f.Causality, Claim: c.Claim, Mechanism: c.Mechanism, Fix: c.Fix, Quote: c.Quote, Relocated: a.Relocated, Merged: f.Merged}
+		Level: f.Level, Causality: f.Causality, Claim: report.Redact(c.Claim), Mechanism: report.Redact(c.Mechanism), Fix: report.Redact(c.Fix),
+		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged}
 }
 
 func runReview(args []string, env Env) error {

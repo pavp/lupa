@@ -15,7 +15,8 @@ type ReviewInput struct {
 }
 
 // Review renders a verified review: every finding by level, worst first, then the pre-existing
-// follow-ups, the coverage and every dropped or refuted comment. No finding is capped.
+// follow-ups, the coverage and every dropped or refuted comment. No finding is capped; every
+// model-written text is redacted.
 func Review(in ReviewInput) []byte {
 	var b strings.Builder
 	out := in.Out
@@ -78,13 +79,13 @@ func Review(in ReviewInput) []byte {
 	for _, d := range out.Dropped {
 		fmt.Fprintf(&b, "- %s (group %d) · `%s`: %s", d.Stage, d.Group, d.Comment.File, d.Reason)
 		if d.Comment.Claim != "" {
-			fmt.Fprintf(&b, " — %s", d.Comment.Claim)
+			fmt.Fprintf(&b, " — %s", Redact(d.Comment.Claim))
 		}
 		b.WriteString("\n")
 	}
 	for _, r := range out.Refuted {
 		fmt.Fprintf(&b, "- refuted · `%s`: %s — citation `%s`\n",
-			span(r.Finding.Finding.Location), r.Finding.Finding.Comment.Claim, at(r.Citation.File, r.Citation.Line))
+			span(r.Finding.Finding.Location), Redact(r.Finding.Finding.Comment.Claim), at(r.Citation.File, r.Citation.Line))
 	}
 	return []byte(b.String())
 }
@@ -98,13 +99,13 @@ func writeFinding(b *strings.Builder, n int, a review.Anchored) {
 	if f.Merged > 0 {
 		tags = append(tags, fmt.Sprintf("merged %d", f.Merged))
 	}
-	quote := c.Quote
+	quote := Redact(c.Quote)
 	fence := "```"
 	for strings.Contains(quote, fence) {
 		fence += "`"
 	}
 	fmt.Fprintf(b, "**%d. %s** (%s)\n\nWhy it matters: %s\n\n%s\n%s\n%s\n\nFix: %s\n\n",
-		n, c.Claim, strings.Join(tags, " · "), c.Mechanism, fence, quote, fence, c.Fix)
+		n, Redact(c.Claim), strings.Join(tags, " · "), Redact(c.Mechanism), fence, quote, fence, Redact(c.Fix))
 }
 
 // span formats a location as file:start, or file:start-end when it covers several lines.
