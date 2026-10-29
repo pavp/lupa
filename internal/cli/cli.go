@@ -2,6 +2,8 @@
 package cli
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/pavp/lupa/internal/agent"
+	"github.com/pavp/lupa/internal/agent/claude"
 	"github.com/pavp/lupa/internal/git"
 	"github.com/pavp/lupa/internal/lang/typescript"
 	"github.com/pavp/lupa/internal/mapping"
@@ -18,15 +22,19 @@ import (
 	"github.com/pavp/lupa/internal/report"
 	"github.com/pavp/lupa/internal/review"
 	"github.com/pavp/lupa/internal/store"
+	"github.com/pavp/lupa/internal/verify"
 )
 
-const usage = "usage: lupa map <base>..<head> | <branch> [--json]\n       lupa review <base>..<head> | <branch> [--plan] [--yes] [--json]"
+const usage = "usage: lupa map <base>..<head> | <branch> [--json]\n       lupa review <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]"
 
-// Env is what a command reads and writes: the working directory and the output streams.
+// Env is what a command reads and writes: the working directory, the streams, and the agent,
+// which is the claude adapter when nil.
 type Env struct {
 	Dir    string
 	Stdout io.Writer
 	Stderr io.Writer
+	Stdin  io.Reader
+	Agent  agent.Agent
 }
 
 // usageError is reported with the usage line and exit code 2.
@@ -62,12 +70,20 @@ func run(args []string, env Env) error {
 	}
 }
 
-// parseArgs reads one target and the given boolean flags; any other flag or argument is a usage error.
-func parseArgs(args []string, flags map[string]*bool) (target string, err error) {
-	for _, a := range args {
+// parseArgs reads one target, the given boolean flags and the given flags that take a value;
+// any other flag or argument is a usage error.
+func parseArgs(args []string, flags map[string]*bool, values map[string]*string) (target string, err error) {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
 		switch {
 		case flags[a] != nil:
 			*flags[a] = true
+		case values[a] != nil:
+			if i+1 == len(args) {
+				return "", usageError{fmt.Sprintf("flag %q needs a value", a)}
+			}
+			i++
+			*values[a] = args[i]
 		case strings.HasPrefix(a, "-"):
 			return "", usageError{fmt.Sprintf("unknown flag %q", a)}
 		case target != "":
@@ -113,7 +129,7 @@ func mapChange(env Env, target string) (git.Repo, mapping.Signals, error) {
 
 func runMap(args []string, env Env) error {
 	asJSON := false
-	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON})
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON}, nil)
 	if err != nil {
 		return err
 	}
@@ -155,14 +171,87 @@ type planJSON struct {
 	review.Result
 }
 
+// reviewJSON is the shape of `lupa review --json` and of the saved review.json.
+type reviewJSON struct {
+	Schema   string         `json:"schema"`
+	Base     string         `json:"base"`
+	Head     string         `json:"head"`
+	Findings []findingJSON  `json:"findings"`
+	Refuted  []refutedJSON  `json:"refuted"`
+	Dropped  []droppedJSON  `json:"dropped"`
+	Ledger   []review.Entry `json:"ledger"`
+	Usage    usageJSON      `json:"usage"`
+}
+
+type findingJSON struct {
+	File      string `json:"file"`
+	Side      string `json:"side"`
+	Start     int    `json:"start"`
+	End       int    `json:"end"`
+	Severity  string `json:"severity"`
+	Level     string `json:"level"`
+	Causality string `json:"causality"`
+	Claim     string `json:"claim"`
+	Mechanism string `json:"mechanism"`
+	Fix       string `json:"fix"`
+	Quote     string `json:"quote"`
+	Relocated bool   `json:"relocated"`
+	Merged    int    `json:"merged"`
+}
+
+type refutedJSON struct {
+	Finding  findingJSON     `json:"finding"`
+	Citation review.Citation `json:"citation"`
+}
+
+type droppedJSON struct {
+	Stage  string `json:"stage"`
+	Group  int    `json:"group"`
+	Reason string `json:"reason"`
+	File   string `json:"file"`
+	Claim  string `json:"claim,omitempty"`
+	Quote  string `json:"quote,omitempty"`
+}
+
+type usageJSON struct {
+	Calls        int     `json:"calls"`
+	CostUSD      float64 `json:"cost_usd"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+}
+
+func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
+	r := reviewJSON{Schema: "lupa.review/v0", Base: base, Head: head, Findings: []findingJSON{}, Refuted: []refutedJSON{},
+		Dropped: []droppedJSON{}, Ledger: out.Ledger, Usage: usageJSON(out.Usage)}
+	for _, f := range out.Findings {
+		r.Findings = append(r.Findings, findingJSONOf(f))
+	}
+	for _, f := range out.Refuted {
+		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Citation: f.Citation})
+	}
+	for _, d := range out.Dropped {
+		r.Dropped = append(r.Dropped, droppedJSON{Stage: d.Stage, Group: d.Group, Reason: d.Reason, File: d.Comment.File, Claim: d.Comment.Claim, Quote: d.Comment.Quote})
+	}
+	if r.Ledger == nil {
+		r.Ledger = []review.Entry{}
+	}
+	return r
+}
+
+func findingJSONOf(a review.Anchored) findingJSON {
+	f, c := a.Finding, a.Finding.Comment
+	return findingJSON{File: f.Location.File, Side: f.Location.Side, Start: f.Location.Start, End: f.Location.End, Severity: c.Severity,
+		Level: f.Level, Causality: f.Causality, Claim: c.Claim, Mechanism: c.Mechanism, Fix: c.Fix, Quote: c.Quote, Relocated: a.Relocated, Merged: f.Merged}
+}
+
 func runReview(args []string, env Env) error {
-	asJSON, planOnly := false, false
-	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": new(bool)})
+	asJSON, planOnly, yes, agentName := false, false, false, "claude"
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes}, map[string]*string{"--agent": &agentName})
 	if err != nil {
 		return err
 	}
-	if !planOnly {
-		return errors.New("the agent review is not available yet; use --plan")
+	if agentName != "claude" {
+		return usageError{fmt.Sprintf("unknown agent %q", agentName)}
 	}
 	repo, signals, err := mapChange(env, target)
 	if err != nil {
@@ -172,8 +261,10 @@ func runReview(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	plan := review.Plan(signals.Files, patches, review.Options{})
-	if asJSON {
+	conventions := conventionsOf(repo, signals.Base)
+	empty := review.BuildPrompt(review.PromptInput{Conventions: conventions})
+	plan := review.Plan(signals.Files, patches, review.Options{Overhead: len(empty.System) + len(empty.User)})
+	if planOnly && asJSON {
 		out, err := json.MarshalIndent(planJSON{Schema: "lupa.plan/v0", Base: signals.Base, Head: signals.Head, Result: plan}, "", "  ")
 		if err != nil {
 			return err
@@ -181,8 +272,108 @@ func runReview(args []string, env Env) error {
 		_, err = env.Stdout.Write(append(out, '\n'))
 		return err
 	}
-	_, err = io.WriteString(env.Stdout, planText(plan, target))
+	if !asJSON {
+		if _, err := io.WriteString(env.Stdout, planText(plan, target)); err != nil {
+			return err
+		}
+	}
+	if planOnly {
+		return nil
+	}
+	// With --json, stdout carries only the JSON, so the question goes to stderr.
+	talk := env.Stdout
+	if asJSON {
+		talk = env.Stderr
+	}
+	if !yes && !confirm(env.Stdin, talk) {
+		_, err := fmt.Fprintf(talk, "Not run. Read the change first: lupa map %s\n", target)
+		return err
+	}
+
+	ag := env.Agent
+	if ag == nil {
+		ag = claude.Adapter{}
+	}
+	importers := map[string][]string{}
+	for _, f := range signals.Files {
+		if len(f.Importers) > 0 {
+			importers[f.Path] = f.Importers
+		}
+	}
+	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Conventions: conventions, Agent: ag})
+	if err != nil {
+		return err
+	}
+	saved, err := json.MarshalIndent(reviewJSONOf(signals.Base, signals.Head, out), "", "  ")
+	if err != nil {
+		return err
+	}
+	saved = append(saved, '\n')
+	gitDir, err := repo.GitDir()
+	if err != nil {
+		return err
+	}
+	if _, err := (store.Store{Root: filepath.Join(gitDir, "lupa")}).Put(target, signals.Head, "review.json", saved); err != nil {
+		return fmt.Errorf("saving the review: %w", err)
+	}
+	if asJSON {
+		_, err = env.Stdout.Write(saved)
+		return err
+	}
+	_, err = io.WriteString(env.Stdout, summary(out))
 	return err
+}
+
+// confirm asks whether to run the agent review now; only y or yes runs it, and end of input does not.
+func confirm(in io.Reader, out io.Writer) bool {
+	fmt.Fprint(out, "Run the agent review now? [y/N] ")
+	if in == nil {
+		return false
+	}
+	line, _ := bufio.NewReader(in).ReadString('\n')
+	answer := strings.ToLower(strings.TrimSpace(line))
+	return answer == "y" || answer == "yes"
+}
+
+// conventionsOf reads the repo's instruction files at the base, so a change cannot instruct its own reviewer.
+func conventionsOf(repo git.Repo, base string) []review.Convention {
+	var out []review.Convention
+	for _, name := range []string{"AGENTS.md", "CLAUDE.md"} {
+		if src, ok := repo.Show(base, name); ok {
+			out = append(out, review.Convention{Path: name, Content: string(src)})
+		}
+	}
+	return out
+}
+
+// agentReview runs the review in a detached worktree at head, which it always removes.
+func agentReview(repo git.Repo, head string, in review.RunInput) (out review.RunOutput, err error) {
+	dir, remove, err := repo.Worktree(head)
+	if err != nil {
+		return out, fmt.Errorf("creating the review worktree: %w", err)
+	}
+	defer func() { err = errors.Join(err, remove()) }()
+	blobs, err := repo.Reader(head)
+	if err != nil {
+		return out, err
+	}
+	defer blobs.Close()
+	in.Dir = dir
+	in.Head = func(path string) (string, bool) {
+		b, err := blobs.Read(path)
+		return string(b), err == nil
+	}
+	return review.Run(context.Background(), in), nil
+}
+
+func summary(out review.RunOutput) string {
+	levels := map[string]int{}
+	for _, f := range out.Findings {
+		levels[f.Finding.Level]++
+	}
+	return fmt.Sprintf("%d findings: %d blocking, %d important, %d notes, %d follow-up · %d dropped · %d refuted · %d agent runs, $%.2f\n",
+		len(out.Findings), levels[verify.LevelBlocking], levels[verify.LevelImportant], levels[verify.LevelNote], levels[verify.LevelFollowUp],
+		len(out.Dropped), len(out.Refuted), out.Usage.Calls, out.Usage.CostUSD)
 }
 
 func planText(p review.Result, target string) string {

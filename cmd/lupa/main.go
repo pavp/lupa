@@ -14,5 +14,5 @@ func main() {
 		fmt.Fprintf(os.Stderr, "lupa: %s\n", err)
 		os.Exit(2)
 	}
-	os.Exit(cli.Run(os.Args[1:], cli.Env{Dir: dir, Stdout: os.Stdout, Stderr: os.Stderr}))
+	os.Exit(cli.Run(os.Args[1:], cli.Env{Dir: dir, Stdout: os.Stdout, Stderr: os.Stderr, Stdin: os.Stdin}))
 }
