@@ -31,6 +31,8 @@ type Signals struct {
 	Head   string `json:"head"`
 	Files  []File `json:"files"`
 	Size   Size   `json:"size"`
+
+	ReadingOrder []ReadingEntry `json:"reading_order"`
 }
 
 // Build computes the signals of the change from base to head.
@@ -49,5 +51,6 @@ func Build(base, head string, files []File) Signals {
 		s.Size.Deletions += f.Deletions
 	}
 	s.Size.Changed = s.Size.Additions + s.Size.Deletions
+	s.ReadingOrder = readingOrder(s.Files)
 	return s
 }
