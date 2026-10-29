@@ -81,18 +81,29 @@ Head code is read without touching the user's checkout: `git fetch origin pull/<
 1. **[code]** Select reviewable files; keep a coverage ledger: reviewed, or skipped with a reason.
 2. **[code]** Assign review rules per file by path glob, from the language provider; drop items a linter already covers.
 3. **[code]** Group related files, with size limits that degrade to one file per group. Grouping is code, not a model call.
-4. **[agent]** Review each group in an isolated run, read-only tools, no user context. The repo's `AGENTS.md` / `CLAUDE.md`, read from the **base** branch so a PR cannot change its own review, are passed as quoted team conventions, size-capped. Output is JSON: comment, severity, and an exact quote of the code it is about.
-5. **[code]** Validate the JSON and locate each quote: normalized consecutive-line match on the new side, then the old side, then the full new file; then a model-free unique match in another changed file. Still a miss → **[agent]** one relocation retry → still a miss, the comment is **dropped** and counted in the report.
-6. **[code]** Causality by changed hunks (`git diff --unified=0`): `introduced`, `behavior-activated` (the change makes a pre-existing defect reachable) or `pre-existing`. Pre-existing comments move to a follow-up section.
-7. **[agent]** Filter: may remove a comment only by citing a `file:line` whose code contradicts it. A comment whose cited lines alone settle the claim is checked by code instead of a model. No citation, a failed run or a malformed answer → the comment stays.
+4. **[agent]** Review each group in an isolated run with read-only tools (`Read`, `Grep`, `Glob`) inside a detached worktree at the PR head, so the reviewer can check callers outside the diff. The prompt carries, as quoted data under a byte budget (over budget → the group is split or reported as not reviewed, never truncated silently): the group's patch, the importers from the map as a starting hint, the rules, and the repo's `AGENTS.md` / `CLAUDE.md` read from the **base** branch so a PR cannot change its own review. Output is strict JSON: the list of files inspected (must equal the group), and per comment a severity, a claim, the mechanism, a fix, and an exact quote of the code it is about. "No findings" is an explicit empty list and the expected answer for most groups.
+5. **[code]** Validate the JSON: schema, files-inspected coverage, placeholder text rejected. A bad comment is dropped on its own; the rest of the group's output survives. Locate each quote: normalized consecutive-line match on the new side, then the old side, then the full new file; then a model-free unique match in another changed file. Still a miss → **[agent]** one relocation retry → still a miss, the comment is **dropped** and counted in the report.
+6. **[code]** Causality derived from changed hunks (`git diff --unified=0`), never taken from the model: `introduced` when the anchored lines sit inside an added hunk, `behavior-activated` when they sit in a changed file outside the hunks, `pre-existing` otherwise. A binary file or a file without hunks is `unknown`: never shown as introduced, never counted as proof of absence. Pre-existing comments move to a follow-up section.
+7. **[agent]** Filter, one batched run over the surviving severe comments, judged against the same severity rubric the reviewer used: per comment `corroborated`, `refuted` or `inconclusive`. A refutation must cite a `file:line` whose code contradicts the claim, and code checks that the citation exists. A comment whose cited lines alone settle the claim is checked by code instead of a model. No citation, `inconclusive`, a failed run or a malformed answer → the comment stays.
 8. **[code]** Report: comments anchored by line, each with its mechanism and a concrete fix, secrets redacted; pre-existing follow-ups; coverage; dropped comments with the reason. Artifacts keep the exact diff reviewed and the run's provenance.
+
+### Noise controls
+
+The quote gate proves a comment is about real code in the diff, not that it is right or worth reading. Volume is controlled by code, not by asking the model:
+
+- **Severity rubric**, shared by reviewer and filter: severe only when the change causes it, realistic input reaches it, and it names an observable harm; otherwise at most a warning. Style or suspicion is not a finding. Excluded from the prompt's scope: pre-existing issues, nitpicks, anything a linter catches, general quality or test coverage remarks.
+- **Level derived by code** from severity, evidence class (the quoted lines settle the claim, or it needs inference) and causality. The model never promotes its own comment.
+- **Dedupe by code**: same file, overlapping lines and a similar claim merge into one comment.
+- **Default report cap**: only severe comments, at most 5 per PR; the rest stays in the JSON and shows with `--all`.
+- **Measured**: precision is the stop criterion; noise that survives these controls stops the project before it reaches real PRs.
 
 ## Language providers
 
 The core never imports language knowledge. A provider declares:
 
 - which files it owns (extensions), test file patterns, manifests and lockfiles, generated output;
-- a reach analyzer: an external process that prints the import graph in a common JSON shape, so providers can be written in any language;
+- import patterns and how a specifier resolves to a file (relative paths, extensions, directory index, config aliases, workspace package names), read by the core's approximate reach;
+- optionally, an exact reach analyzer: an external process that prints the import graph in a common JSON shape, added only when measurement shows the approximate reach misses what matters;
 - review rule docs by path glob.
 
 Signals and reports carry a `language` field from v1. v1 ships one provider: TypeScript/JavaScript.
@@ -106,7 +117,7 @@ Signals and reports carry a `language` field from v1. v1 ships one provider: Typ
 | Branch ranges and GitHub PRs through `gh` | Other forges |
 | TypeScript/JavaScript provider | Other language providers |
 | Map + review + local report + `--json` | PR comments, CI integration |
-| Reach at file level (import graph) | Symbol-level call chains |
+| Approximate, language-agnostic reach at file level | Exact per-language analyzers, symbol-level call chains |
 | Measurement on a public benchmark | Interactive viewer, telemetry |
 
 ## Agent adapters
@@ -117,10 +128,12 @@ Signals and reports carry a `language` field from v1. v1 ships one provider: Typ
 | Structured output | `--output-format json` / `stream-json` | `--mode json` (also `rpc`) |
 | Read-only tools | `--tools Read,Grep,Glob` | `--tools` allowlist, `--exclude-tools` |
 | Model | `--model` | `--model provider/id`, `--thinking` |
-| Ephemeral | default with `-p` | `--no-session` |
-| Isolate from user context | `--setting-sources ""`, `--strict-mcp-config` | `--no-context-files`, `--no-extensions`, `--no-skills` |
+| Ephemeral | `--no-session-persistence` | `--no-session` |
+| Isolate from user context | `--setting-sources ""`, `--strict-mcp-config`, a replacing `--system-prompt`, prompt on stdin | `--no-context-files`, `--no-extensions`, `--no-skills` |
 
-Never run a reviewer with a permission-bypass mode; the tool allowlist is the boundary. The reviewed tree is a detached worktree at the PR head, never the user's working copy.
+Never run a reviewer with a permission-bypass mode; the tool allowlist is the boundary. The reviewed tree is a detached worktree at the PR head, never the user's working copy. Each run has a time limit and the prompt a byte budget, so cost is predictable.
+
+A tool-free variant (`--tools ""`, the patch and importers inline only) is kept behind an internal flag for measurement: if it matches the read-only mode on precision, it becomes the default because it is cheaper.
 
 Gotchas found while testing:
 
@@ -133,10 +146,11 @@ Gotchas found while testing:
 
 Behind an interface ("what does this change reach"), so implementations can change without touching the rest:
 
-- **v1, file level:** importers of each changed file, transitively up to entry points. Exact for TypeScript/JavaScript only when resolved like the compiler does (path aliases, `extends`, barrels, re-exports, `import type`, package `exports`, workspaces).
+- **v1, approximate and language-agnostic, file level:** the core finds import statements with the provider's patterns and resolves them with its resolution table (relative paths, extensions, directory index, config path aliases, workspace package names). Importers are followed transitively. Deterministic: same input, same output, no model.
+- **Never lose an edge silently:** an import that names a repo file but cannot be resolved is reported as unresolved, so the map states its own limits.
+- **Exact analyzers are optional and later:** a compiler-backed analyzer per language, behind the same interface, only if measurement shows the approximate reach misses importers that matter. A TypeScript analyzer built on the compiler API already passes the resolution-trap fixtures and serves as the oracle to measure the approximate one. Note: TypeScript 7 no longer ships the classic compiler API, so such an analyzer must pin its own TypeScript 6.x and requires Node.
+- **The review does not depend on reach:** the reviewer explores callers with its read-only tools; reach is a starting hint and a risk signal for the map.
 - **Later, only if file level falls short:** symbol-level call chains, framework entry points (routes, pages, jobs).
-
-Open: Go cannot run the TypeScript compiler in-process. Recommended: a small Node script that uses the project's own TypeScript compiler API, validated on fixtures with planted resolution traps before it is adopted.
 
 ## Measurement and stop criterion
 
@@ -154,8 +168,8 @@ Fixtures with planted traps cover `lupa map`: claims the diff does not implement
 
 ## Open decisions
 
-- How the TypeScript/JavaScript provider computes reach (Node subprocess recommended).
 - The signals JSON schema.
+- The default report cap (5 proposed) and the dedupe similarity rule.
 - Review prompt and rule set for TypeScript/JavaScript.
 - Report format (markdown only, or markdown plus HTML).
 - Output location: proposed `$(git rev-parse --git-dir)/lupa/<pr-or-branch>/<short-sha>/`.
