@@ -24,7 +24,7 @@ type RunInput struct {
 	Dir         string
 	Timeout     time.Duration
 	Head        func(path string) (string, bool)
-	// Parallel bounds how many groups are reviewed at once; zero means DefaultParallel.
+	// Parallel bounds how many groups are reviewed at once; zero means DefaultParallel, below one means one.
 	Parallel int
 }
 
@@ -75,7 +75,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	out := RunOutput{Ledger: slices.Clone(in.Plan.Ledger)}
 	ag := meter{Agent: in.Agent, usage: &out.Usage, mu: &sync.Mutex{}}
 	results := make([]groupResult, len(in.Plan.Groups))
-	limit := make(chan struct{}, cmp.Or(in.Parallel, DefaultParallel))
+	limit := make(chan struct{}, max(1, cmp.Or(in.Parallel, DefaultParallel)))
 	var wg sync.WaitGroup
 	for i, g := range in.Plan.Groups {
 		wg.Add(1)

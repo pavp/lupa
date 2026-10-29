@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/pavp/lupa/internal/agent"
@@ -156,8 +157,11 @@ var groupPaths = regexp.MustCompile(`The paths of this group, for files_inspecte
 // fakeAgent answers every reviewer run with one severe comment on `var B = 1` and the refuter
 // with corroborated, and records each request.
 func fakeAgent(t *testing.T, reqs *[]agent.Request) *agent.Fake {
+	var mu sync.Mutex
 	return &agent.Fake{Reply: func(req agent.Request) (string, error) {
+		mu.Lock()
 		*reqs = append(*reqs, req)
+		mu.Unlock()
 		if strings.Contains(req.Prompt, "Try to disprove") {
 			return `{"results": [{"id": 0, "outcome": "corroborated"}]}`, nil
 		}

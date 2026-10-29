@@ -322,6 +322,15 @@ func TestRunRecomputesTheCausalityOfAMergedFinding(t *testing.T) {
 	}
 }
 
+func TestRunTreatsANegativeParallelAsOne(t *testing.T) {
+	f := &fakeRun{review: func(string) (string, error) { return answer([]string{"lib/tax.ts"}), nil }}
+	in := f.input(runPlan(Options{}))
+	in.Parallel = -1
+	if out := Run(context.Background(), in); out.Usage.Calls != 2 {
+		t.Errorf("calls = %d, want both groups reviewed", out.Usage.Calls)
+	}
+}
+
 func TestRunRetriesAnUnusableAnswerOnce(t *testing.T) {
 	plan := runPlan(Options{})
 	taxRuns := 0
