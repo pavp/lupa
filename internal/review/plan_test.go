@@ -65,12 +65,20 @@ func TestPlan(t *testing.T) {
 			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "a/y.go", Status: Reviewed, Groups: []int{2}}},
 		},
 		{
-			name:    "different directories get separate groups",
+			name:    "a directory change closes a group holding a quarter of the budget",
 			files:   []mapping.File{file("b/y.go"), file("a/x.go")},
-			patches: map[string]string{"a/x.go": hunk(1, 20), "b/y.go": hunk(1, 20)},
+			patches: map[string]string{"a/x.go": hunk(1, 250), "b/y.go": hunk(1, 20)},
 			budget:  1000,
 			groups:  []string{"1:a/x.go", "2:b/y.go"},
 			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "b/y.go", Status: Reviewed, Groups: []int{2}}},
+		},
+		{
+			name:    "a small group takes the next directory",
+			files:   []mapping.File{file("b/y.go"), file("a/x.go")},
+			patches: map[string]string{"a/x.go": hunk(1, 249), "b/y.go": hunk(1, 20)},
+			budget:  1000,
+			groups:  []string{"1:a/x.go|b/y.go"},
+			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "b/y.go", Status: Reviewed, Groups: []int{1}}},
 		},
 		{
 			name:    "a file over the budget is split by hunks",
@@ -92,14 +100,17 @@ func TestPlan(t *testing.T) {
 			},
 		},
 		{
-			name: "generated and binary files are skipped with a reason",
+			name: "generated, binary and documentation files are skipped with a reason",
 			files: []mapping.File{
 				{Path: "package-lock.json", Class: mapping.Skip, Reason: "lockfile"},
 				{Path: "logo.png", Class: mapping.Skim, Binary: true},
+				file("docs/guide.mdx"), file("README.md"),
 			},
-			patches: map[string]string{"package-lock.json": hunk(1, 20)},
+			patches: map[string]string{"package-lock.json": hunk(1, 20), "README.md": hunk(1, 20), "docs/guide.mdx": hunk(1, 20)},
 			budget:  1000,
 			ledger: []Entry{
+				{Path: "README.md", Status: Skipped, Reason: "documentation"},
+				{Path: "docs/guide.mdx", Status: Skipped, Reason: "documentation"},
 				{Path: "logo.png", Status: Skipped, Reason: "binary file"},
 				{Path: "package-lock.json", Status: Skipped, Reason: "generated: lockfile"},
 			},
@@ -138,11 +149,11 @@ func TestPlanIsDeterministic(t *testing.T) {
 }
 
 func TestPlanEstimate(t *testing.T) {
-	r := Plan([]mapping.File{file("a.go"), file("b/c.go")}, map[string]string{"a.go": hunk(1, 101), "b/c.go": hunk(1, 50)}, Options{})
+	r := Plan([]mapping.File{file("a.go"), file("b/c.go")}, map[string]string{"a.go": hunk(1, 15000), "b/c.go": hunk(1, 50)}, Options{})
 	if r.Budget != DefaultBudget {
 		t.Errorf("budget = %d, want %d", r.Budget, DefaultBudget)
 	}
-	want := Estimate{Runs: 3, Tokens: (101+4000+3)/4 + (50+4000+3)/4 + 2*ReadingTokens}
+	want := Estimate{Runs: 3, Tokens: (15000+4000+3)/4 + (50+4000+3)/4 + 2*ReadingTokens}
 	if r.Estimate != want {
 		t.Errorf("estimate = %+v, want %+v", r.Estimate, want)
 	}
