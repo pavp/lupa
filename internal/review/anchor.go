@@ -123,22 +123,30 @@ func relocatePrompt(c verify.Comment, patch string) string {
 
 // parseQuote accepts exactly one JSON object with a string quote, optionally in a ``` fence.
 func parseQuote(text string) (string, error) {
-	t := strings.TrimSpace(text)
-	if first, body, ok := strings.Cut(t, "\n"); ok && (first == "```" || first == "```json") && strings.HasSuffix(t, "```") {
-		t = strings.TrimSuffix(body, "```")
-	}
 	var reply struct {
 		Quote *string `json:"quote"`
 	}
-	dec := json.NewDecoder(strings.NewReader(t))
-	if err := dec.Decode(&reply); err != nil {
+	if err := decodeOne(text, &reply); err != nil {
 		return "", err
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return "", errors.New("data after the JSON object")
 	}
 	if reply.Quote == nil {
 		return "", errors.New("no quote")
 	}
 	return *reply.Quote, nil
+}
+
+// decodeOne decodes exactly one JSON object, optionally in a ``` fence, into v; trailing data is an error.
+func decodeOne(text string, v any) error {
+	t := strings.TrimSpace(text)
+	if first, body, ok := strings.Cut(t, "\n"); ok && (first == "```" || first == "```json") && strings.HasSuffix(t, "```") {
+		t = strings.TrimSuffix(body, "```")
+	}
+	dec := json.NewDecoder(strings.NewReader(t))
+	if err := dec.Decode(v); err != nil {
+		return err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return errors.New("data after the JSON object")
+	}
+	return nil
 }
