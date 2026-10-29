@@ -99,3 +99,30 @@ func TestTsconfigWinsOverJsconfig(t *testing.T) {
 		t.Errorf("Resolve = %q, want ts/a.ts from tsconfig.json", got)
 	}
 }
+
+func TestExtendsList(t *testing.T) {
+	contents := map[string]string{
+		"tsconfig.strict.json": `{ "compilerOptions": { "paths": { "@/*": ["old/*"] } } }`,
+		"tsconfig.paths.json":  `{ "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["src/*"] } } }`,
+		"app/tsconfig.json":    `{ "extends": ["../tsconfig.strict.json", "../tsconfig.paths.json", "@tsconfig/node20"] }`,
+		"src/lib/date.ts":      "",
+		"old/lib/date.ts":      "",
+		"app/main.ts":          "",
+	}
+	files := make([]string, 0, len(contents))
+	for f := range contents {
+		files = append(files, f)
+	}
+	r, err := NewResolver(files, func(p string) ([]byte, error) {
+		if c, ok := contents[p]; ok {
+			return []byte(c), nil
+		}
+		return nil, errors.New("not found")
+	})
+	if err != nil {
+		t.Fatalf("an extends list: %v", err)
+	}
+	if got, status := r.Resolve("app/main.ts", "@/lib/date"); got != "src/lib/date.ts" || status != Resolved {
+		t.Errorf("Resolve = %q, %v; want src/lib/date.ts from the last config of the list", got, status)
+	}
+}
