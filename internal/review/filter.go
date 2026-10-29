@@ -11,12 +11,14 @@ import (
 	"github.com/pavp/lupa/internal/verify"
 )
 
-// FilterInput is what the refuter run needs: the agent and run settings and the anchored findings.
+// FilterInput is what the refuter run needs: the agent and run settings, the anchored findings,
+// and a reader of any repo file at the head of the change, for checking citations.
 type FilterInput struct {
 	Agent    agent.Agent
 	Dir      string
 	Timeout  time.Duration
 	Findings []Anchored
+	Head     func(path string) (string, bool)
 }
 
 // The outcomes of a filtered finding.
@@ -66,8 +68,9 @@ Output: reply with ONE JSON object and nothing else, with one result per finding
 Give a citation only for refuted; a refutation without one counts as inconclusive.
 `
 
-// Filter sends the important findings to one refuter run and records each outcome. Every
-// finding stays: a refutation is not applied until code can verify its citation.
+// Filter sends the important findings to one refuter run and removes those refuted with a
+// citation that code finds at its line. Every other finding stays, and a failed run or a
+// malformed reply keeps them all.
 func Filter(ctx context.Context, in FilterInput) FilterResult {
 	res := FilterResult{Outcomes: map[int]string{}}
 	var eligible []int
@@ -99,6 +102,7 @@ func Filter(ctx context.Context, in FilterInput) FilterResult {
 		return res
 	}
 
+	citations := map[int]Citation{}
 	for _, r := range results {
 		switch {
 		case !isEligible(r.ID, in.Findings):
@@ -106,7 +110,11 @@ func Filter(ctx context.Context, in FilterInput) FilterResult {
 		case res.Outcomes[r.ID] != "":
 			res.Notes = append(res.Notes, fmt.Sprintf("ignored duplicate result for id %d", r.ID))
 		default:
-			res.Outcomes[r.ID] = checkResult(r, &res.Notes)
+			outcome, cit := checkResult(r, in.Head, &res.Notes)
+			res.Outcomes[r.ID] = outcome
+			if outcome == OutcomeRefuted {
+				citations[r.ID] = cit
+			}
 		}
 	}
 	for _, i := range eligible {
@@ -115,7 +123,13 @@ func Filter(ctx context.Context, in FilterInput) FilterResult {
 			res.Notes = append(res.Notes, fmt.Sprintf("id %d: no result, kept as inconclusive", i))
 		}
 	}
-	res.Kept = append(res.Kept, in.Findings...)
+	for i, f := range in.Findings {
+		if cit, ok := citations[i]; ok {
+			res.Refuted = append(res.Refuted, RefutedFinding{Finding: f, Citation: cit})
+			continue
+		}
+		res.Kept = append(res.Kept, f)
+	}
 	return res
 }
 
@@ -123,17 +137,32 @@ func isEligible(id int, findings []Anchored) bool {
 	return id >= 0 && id < len(findings) && findings[id].Finding.Level == verify.LevelImportant
 }
 
-// checkResult keeps a refutation as inconclusive, since its citation is not verified yet.
-func checkResult(r refuterResult, notes *[]string) string {
+// checkResult downgrades a refutation to inconclusive unless its cited quote is in the head
+// file on lines that include the cited line.
+func checkResult(r refuterResult, head func(string) (string, bool), notes *[]string) (string, Citation) {
 	switch r.Outcome {
 	case OutcomeCorroborated, OutcomeInconclusive:
-		return r.Outcome
+		return r.Outcome, Citation{}
 	case OutcomeRefuted:
-		*notes = append(*notes, fmt.Sprintf("id %d: refutation not applied: citations are not verified yet", r.ID))
 	default:
 		*notes = append(*notes, fmt.Sprintf("id %d: unknown outcome %q, kept as inconclusive", r.ID, r.Outcome))
+		return OutcomeInconclusive, Citation{}
 	}
-	return OutcomeInconclusive
+	if r.Citation == nil {
+		*notes = append(*notes, fmt.Sprintf("id %d: refutation has no citation, kept as inconclusive", r.ID))
+		return OutcomeInconclusive, Citation{}
+	}
+	c := *r.Citation
+	if _, ok := head(c.File); !ok {
+		*notes = append(*notes, fmt.Sprintf("id %d: cited file %s cannot be read, kept as inconclusive", r.ID, c.File))
+		return OutcomeInconclusive, Citation{}
+	}
+	loc, ok := verify.Locate(c.Quote, c.File, nil, head)
+	if !ok || c.Line < loc.Start || c.Line > loc.End {
+		*notes = append(*notes, fmt.Sprintf("id %d: cited quote not found at %s:%d, kept as inconclusive", r.ID, c.File, c.Line))
+		return OutcomeInconclusive, Citation{}
+	}
+	return OutcomeRefuted, c
 }
 
 func filterPrompt(findings []Anchored, eligible []int) string {
