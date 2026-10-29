@@ -40,8 +40,9 @@ type config struct {
 // relative paths, extension mapping, directory index files, and `paths`/`baseUrl` from the nearest
 // tsconfig.json or jsconfig.json, following relative `extends`.
 type Resolver struct {
-	files   map[string]bool
-	configs map[string]*config
+	files      map[string]bool
+	configs    map[string]*config
+	workspaces []workspacePkg
 }
 
 // NewResolver builds a resolver over the repo's files; readFile reads a repo-relative file.
@@ -58,6 +59,10 @@ func NewResolver(files []string, readFile func(path string) ([]byte, error)) (*R
 		if err := r.loadConfigs(sorted, name, readFile); err != nil {
 			return nil, err
 		}
+	}
+	var err error
+	if r.workspaces, err = loadWorkspaces(sorted, readFile); err != nil {
+		return nil, err
 	}
 	return r, nil
 }
@@ -94,6 +99,11 @@ func (r *Resolver) Resolve(from, spec string) (string, Status) {
 			}
 			return "", Unresolved
 		}
+	}
+	if f, status, ok := r.resolveWorkspace(spec); ok {
+		return f, status
+	}
+	if c := r.configFor(from); c != nil {
 		if c.baseURL != "" {
 			if f := r.file(path.Join(c.baseURL, spec)); f != "" {
 				return f, Resolved
