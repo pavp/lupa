@@ -217,7 +217,7 @@ func loadConfig(file string, readFile func(string) ([]byte, error), depth int) (
 		return loaded{}, fmt.Errorf("%s: %w", file, err)
 	}
 	var doc struct {
-		Extends         string `json:"extends"`
+		Extends         json.RawMessage `json:"extends"`
 		CompilerOptions struct {
 			BaseURL *string             `json:"baseUrl"`
 			Paths   map[string][]string `json:"paths"`
@@ -226,16 +226,35 @@ func loadConfig(file string, readFile func(string) ([]byte, error), depth int) (
 	if err := json.Unmarshal(stripJSONC(raw), &doc); err != nil {
 		return loaded{}, fmt.Errorf("%s: %w", file, err)
 	}
+	// `extends` is one config or, since TypeScript 5.0, a list applied in order, each overriding the ones before.
+	var parents []string
+	if len(doc.Extends) > 0 && json.Unmarshal(doc.Extends, &parents) != nil {
+		var one string
+		if err := json.Unmarshal(doc.Extends, &one); err != nil {
+			return loaded{}, fmt.Errorf("%s: extends: %w", file, err)
+		}
+		parents = []string{one}
+	}
 	dir := path.Dir(file)
 	var l loaded
-	// A package `extends` lives in node_modules, which lupa does not read; only relative ones are followed.
-	if strings.HasPrefix(doc.Extends, "./") || strings.HasPrefix(doc.Extends, "../") {
-		parent := path.Join(dir, doc.Extends)
+	for _, ext := range parents {
+		// A package `extends` lives in node_modules, which lupa does not read; only relative ones are followed.
+		if !strings.HasPrefix(ext, "./") && !strings.HasPrefix(ext, "../") {
+			continue
+		}
+		parent := path.Join(dir, ext)
 		if path.Ext(parent) != ".json" {
 			parent += ".json"
 		}
-		if l, err = loadConfig(parent, readFile, depth+1); err != nil {
+		p, err := loadConfig(parent, readFile, depth+1)
+		if err != nil {
 			return loaded{}, err
+		}
+		if p.hasBase {
+			l.baseURL, l.hasBase = p.baseURL, true
+		}
+		if p.paths != nil {
+			l.paths, l.pathsDir = p.paths, p.pathsDir
 		}
 	}
 	if b := doc.CompilerOptions.BaseURL; b != nil {
