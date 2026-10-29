@@ -39,7 +39,7 @@ func TestClaims(t *testing.T) {
 		{"a span with spaces is a command or a snippet, not a citation", "Checks: `go test ./...`, `fetchUser`.", []Claim{{Text: "Checks: `go test ./...`, `fetchUser`.", Cites: []Cite{
 			{Text: "fetchUser", Found: true, Path: "src/user.ts", Side: "+", Line: 11, Code: "export function fetchUser(id: string) {"},
 		}}}},
-		{"template leftovers, code blocks and links are not claims", "## Summary\n<!-- say why -->\n- [x] Tests added\n```\nfetchUser(1)\n```\nSee https://example.com/a/b.ts for context",
+		{"template leftovers, code blocks, HTML lines and links are not claims", "## Summary\n<!-- say why -->\n- [x] Tests added\n<details>\n<summary>Possible optimization</summary>\n```\nfetchUser(1)\n```\n</details>\nSee https://example.com/a/b.ts for context",
 			[]Claim{{Text: "See https://example.com/a/b.ts for context", Cites: nil}}},
 	}
 	for _, c := range cases {

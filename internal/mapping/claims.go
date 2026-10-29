@@ -47,7 +47,8 @@ var (
 )
 
 // claims cuts the description into sentences and list items, skipping HTML comments, headings,
-// checkboxes and fenced code, and looks up every code span and path each one cites in the diff.
+// checkboxes, fenced code and lines that open with an HTML tag, such as a <details> block's markup,
+// and looks up every code span and path each one cites in the diff.
 func claims(body string, files []File, patches map[string]string) []Claim {
 	var out []Claim
 	fenced := false
@@ -56,7 +57,7 @@ func claims(body string, files []File, patches map[string]string) []Claim {
 			fenced = !fenced
 			continue
 		}
-		if fenced || boilerplate.MatchString(line) {
+		if fenced || boilerplate.MatchString(line) || strings.HasPrefix(strings.TrimSpace(line), "<") {
 			continue
 		}
 		for _, text := range sentences(listMarker.ReplaceAllString(line, "")) {
