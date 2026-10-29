@@ -108,6 +108,40 @@ The core never imports language knowledge. A provider declares:
 
 Signals and reports carry a `language` field from v1. v1 ships one provider: TypeScript/JavaScript.
 
+## Code layout
+
+Organized by domain, so the tree says what Lupa does. The core defines interfaces; everything external (agents, the forge, git) implements them at the edges.
+
+```
+cmd/lupa/            main: wires dependencies, calls cli
+internal/
+  cli/               commands (review, map, doctor, skill install), flags, --json output
+  review/            main use case: map → plan → agent → verify → filter → report
+  mapping/           map signals: size, path rules, owners, review-now gate, reading order
+  verify/            the deterministic core: schema, quote location, causality by hunks,
+                     derived level, dedupe (pure code, no I/O)
+  reach/             approximate reach behind an interface (exact analyzers optional)
+  lang/              language provider interface
+    typescript/      import patterns, resolution table, review rule docs (embedded)
+  agent/             Agent interface (run one review, return raw JSON)
+    claude/          adapter: isolation flags, stdin prompt, time limit
+    pi/              adapter
+  forge/github/      PR data through gh, fetching the head without a checkout
+  git/               diff, hunks, merge-base, detached worktree
+  report/            markdown and the versioned JSON schema
+  store/             <git-dir>/lupa/<pr>/<sha>/ and "since your last look"
+  skill/             embedded SKILL.md and its install
+```
+
+The package is `mapping` because `map` is a Go keyword.
+
+Dependency rules:
+
+- `verify/` and `mapping/` import nothing external: data in, data out. They carry the product's promise and get the deepest tests (table-driven, fixtures with planted traps).
+- `review/` orchestrates through interfaces (`Agent`, `Forge`, `Repo`, `Language`); its tests use a fake agent returning hand-written JSON, so the whole pipeline is tested without spending tokens.
+- Only the adapters (`agent/*`, `forge/github`, `git/`) spawn processes; their integration tests are skipped with `-short`.
+- A new language or agent is a new directory; the core does not change.
+
 ## v1 scope
 
 | In | Out for now |
