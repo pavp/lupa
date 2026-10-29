@@ -246,6 +246,11 @@ func loadConfig(file string, readFile func(string) ([]byte, error), depth int) (
 		if path.Ext(parent) != ".json" {
 			parent += ".json"
 		}
+		// Frameworks generate the config some tsconfigs extend (.svelte-kit, .nuxt) at build time, so it is
+		// not in the repo; the file's own options still apply without it.
+		if _, err := readFile(parent); err != nil {
+			continue
+		}
 		p, err := loadConfig(parent, readFile, depth+1)
 		if err != nil {
 			return loaded{}, err
