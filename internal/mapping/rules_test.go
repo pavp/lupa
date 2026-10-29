@@ -52,12 +52,39 @@ func TestBuildExcludesGeneratedFromSize(t *testing.T) {
 	got := Build("b", "h", []File{
 		{Path: "src/app.ts", Additions: 10, Deletions: 2},
 		{Path: "package-lock.json", Additions: 900, Deletions: 300},
-	})
+	}, Reach{})
 	want := Size{Files: 1, Additions: 10, Deletions: 2, Changed: 12, GeneratedFiles: 1}
 	if got.Size != want {
 		t.Errorf("size = %+v, want %+v", got.Size, want)
 	}
 	if got.Files[1].Class != Skip || got.Files[0].Class != Skim {
 		t.Errorf("classes = %q %q, want skim skip", got.Files[0].Class, got.Files[1].Class)
+	}
+}
+
+func TestBuildPromotesFilesWithOutsideImporters(t *testing.T) {
+	got := Build("b", "h", []File{
+		{Path: "src/Badge.tsx", Additions: 3},
+		{Path: "src/auth/session.ts", Additions: 1},
+		{Path: "src/lonely.ts", Additions: 1},
+	}, Reach{
+		Importers: map[string][]string{
+			"src/Badge.tsx":       {"src/a.tsx", "src/b.tsx"},
+			"src/auth/session.ts": {"src/app.ts"},
+		},
+		Unresolved: []Unresolved{{From: "src/Badge.tsx", Specifier: "./missing"}},
+	})
+	badge, session, lonely := got.Files[0], got.Files[1], got.Files[2]
+	if badge.Class != ReadFirst || badge.Risk != Impact || badge.Reason != "imported by 2 files outside this change" || len(badge.Importers) != 2 {
+		t.Errorf("badge = %+v, want read-first impact with 2 importers", badge)
+	}
+	if session.Reason != "auth, permissions, sessions, tokens or secrets by name" || len(session.Importers) != 1 {
+		t.Errorf("session = %+v, want its auth reason kept and 1 importer listed", session)
+	}
+	if lonely.Class != Skim || lonely.Importers != nil {
+		t.Errorf("lonely = %+v, want skim without importers", lonely)
+	}
+	if len(got.Unresolved) != 1 || got.Unresolved[0].Specifier != "./missing" {
+		t.Errorf("unresolved = %+v", got.Unresolved)
 	}
 }

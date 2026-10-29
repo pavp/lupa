@@ -191,3 +191,50 @@ func TestErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestMapReach(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "tsconfig.json", `{ "compilerOptions": { "paths": { "@/*": ["src/*"] } } }`)
+	write(t, dir, "src/Badge.ts", "export const badge = 1;\n")
+	write(t, dir, "src/a.ts", "import { badge } from './Badge';\nexport const a = badge;\n")
+	write(t, dir, "src/b.ts", "import { badge } from '@/Badge';\nexport const b = badge;\n")
+	write(t, dir, "src/index.ts", "export * from './a';\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	write(t, dir, "src/Badge.ts", "import { gone } from './missing';\nexport const badge = 2;\n")
+	write(t, dir, "src/b.ts", "import { badge } from '@/Badge';\nexport const b = badge + 1;\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "change")
+
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got struct {
+		Files []struct {
+			Path      string   `json:"path"`
+			Class     string   `json:"class"`
+			Reason    string   `json:"reason"`
+			Importers []string `json:"importers"`
+		} `json:"files"`
+		Unresolved []struct {
+			From      string `json:"from"`
+			Specifier string `json:"specifier"`
+		} `json:"unresolved"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	badge := got.Files[0]
+	if badge.Path != "src/Badge.ts" || badge.Class != "read-first" || badge.Reason != "imported by 2 files outside this change" ||
+		strings.Join(badge.Importers, ",") != "src/a.ts,src/index.ts" {
+		t.Errorf("Badge = %+v, want read-first, importers src/a.ts and src/index.ts (src/b.ts is in the change)", badge)
+	}
+	if len(got.Unresolved) != 1 || got.Unresolved[0].From != "src/Badge.ts" || got.Unresolved[0].Specifier != "./missing" {
+		t.Errorf("unresolved = %+v, want ./missing from src/Badge.ts", got.Unresolved)
+	}
+}

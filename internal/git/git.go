@@ -2,9 +2,11 @@
 package git
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"strconv"
 	"strings"
@@ -109,4 +111,69 @@ func (r Repo) NumStat(base, head string) ([]FileChange, error) {
 		changes = append(changes, c)
 	}
 	return changes, nil
+}
+
+// Files lists every file tracked at rev.
+func (r Repo) Files(rev string) ([]string, error) {
+	out, err := r.run("ls-tree", "-r", "-z", "--name-only", rev)
+	if err != nil {
+		return nil, err
+	}
+	return strings.Split(strings.TrimSuffix(out, "\x00"), "\x00"), nil
+}
+
+// BlobReader reads files at one revision through a single `git cat-file --batch` process.
+type BlobReader struct {
+	rev   string
+	cmd   *exec.Cmd
+	stdin io.WriteCloser
+	out   *bufio.Reader
+}
+
+// Reader starts a BlobReader at rev; Close it when done.
+func (r Repo) Reader(rev string) (*BlobReader, error) {
+	cmd := exec.Command("git", "cat-file", "--batch")
+	cmd.Dir = r.Dir
+	stdin, err := cmd.StdinPipe()
+	if err != nil {
+		return nil, err
+	}
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, err
+	}
+	if err := cmd.Start(); err != nil {
+		return nil, err
+	}
+	return &BlobReader{rev: rev, cmd: cmd, stdin: stdin, out: bufio.NewReader(stdout)}, nil
+}
+
+// Read returns the content of path at the reader's revision.
+func (b *BlobReader) Read(path string) ([]byte, error) {
+	if _, err := fmt.Fprintf(b.stdin, "%s:%s\n", b.rev, path); err != nil {
+		return nil, err
+	}
+	header, err := b.out.ReadString('\n')
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Fields(header)
+	if len(fields) != 3 {
+		return nil, fmt.Errorf("%s:%s: %s", b.rev, path, strings.TrimSpace(header))
+	}
+	size, err := strconv.Atoi(fields[2])
+	if err != nil {
+		return nil, fmt.Errorf("cat-file header %q: %w", header, err)
+	}
+	content := make([]byte, size+1)
+	if _, err := io.ReadFull(b.out, content); err != nil {
+		return nil, err
+	}
+	return content[:size], nil
+}
+
+// Close stops the cat-file process.
+func (b *BlobReader) Close() error {
+	b.stdin.Close()
+	return b.cmd.Wait()
 }
