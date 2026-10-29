@@ -100,7 +100,15 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 		anchored = append(anchored, r.findings...)
 	}
 
-	filtered := Filter(ctx, FilterInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: dedupe(anchored), Head: in.Head})
+	merged := dedupe(anchored)
+	for i := range merged {
+		// A merge widens the survivor's range, which can now reach a changed line.
+		if f := &merged[i].Finding; f.Merged > 0 {
+			f.Causality = verify.Causality(f.Location, in.Patches)
+			f.Level = verify.Level(f.Comment, f.Causality)
+		}
+	}
+	filtered := Filter(ctx, FilterInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: merged, Head: in.Head})
 	out.Findings, out.Refuted = filtered.Kept, filtered.Refuted
 	if filtered.Note != "" {
 		out.Notes = append(out.Notes, filtered.Note)

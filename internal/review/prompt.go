@@ -13,6 +13,9 @@ import (
 // conventionLimit is the most bytes of one convention file a prompt carries.
 const conventionLimit = 8000
 
+// hintLimit is the most bytes of importer hints a prompt carries; a barrel can reach hundreds of files.
+const hintLimit = 4000
+
 // Convention is a repo instruction file (AGENTS.md, CLAUDE.md) read from the base branch.
 type Convention struct{ Path, Content string }
 
@@ -54,7 +57,7 @@ func BuildPrompt(in PromptInput) Prompt {
 		data = append(data, block{"convention", "Path: " + c.Path + "\n\n" + truncate(c.Content, conventionLimit)})
 	}
 	if hints := importerHints(in.Paths, in.Importers); hints != "" {
-		data = append(data, block{"hints", hints})
+		data = append(data, block{"hints", truncate(hints, hintLimit)})
 	}
 	data = append(data, block{"change", in.Patch})
 

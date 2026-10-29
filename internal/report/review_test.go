@@ -184,3 +184,20 @@ func TestReviewRedactsEveryField(t *testing.T) {
 		t.Errorf("the key name is not kept:\n%s", got)
 	}
 }
+
+func TestReviewShowsRunNotesAndRedactsReasons(t *testing.T) {
+	secret := "ghp_" + strings.Repeat("a", 36)
+	in := sampleReview()
+	in.Out.Notes = []string{"filter run failed: claude: exit status 1: token " + secret}
+	in.Out.Ledger = []review.Entry{{Path: "a.ts", Status: review.NotReviewed, Reason: "agent run failed: Bearer " + strings.Repeat("c", 20)}}
+	in.Out.Dropped = []review.Drop{{Stage: review.StageAnchor, Group: 1, Reason: "relocation failed: key " + secret, Comment: verify.Comment{File: "a.ts"}}}
+	got := string(Review(in))
+	if !strings.Contains(got, "### Run notes\n\n- filter run failed: claude: exit status 1: token ‹redacted›\n") {
+		t.Errorf("the run notes are missing or not redacted:\n%s", got)
+	}
+	for _, leak := range []string{"ghp_aaa", "cccccccc"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("%q leaked:\n%s", leak, got)
+		}
+	}
+}

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -41,7 +42,11 @@ type usageError struct{ msg string }
 
 func (e usageError) Error() string { return e.msg }
 
-// Run executes one lupa command and returns its exit code: 0 on success, 2 on a usage or input error.
+// errNothingReviewed is reported after the review is saved and shown, with exit code 1.
+var errNothingReviewed = errors.New("no group was reviewed: every agent run failed or answered unusably; see the coverage")
+
+// Run executes one lupa command and returns its exit code: 0 on success, 1 when a review ran but
+// no group could be reviewed, 2 on a usage or input error.
 func Run(args []string, env Env) int {
 	if err := run(args, env); err != nil {
 		var ue usageError
@@ -49,6 +54,9 @@ func Run(args []string, env Env) int {
 			fmt.Fprintf(env.Stderr, "lupa: %s\n%s\n", ue.msg, usage)
 		} else {
 			fmt.Fprintf(env.Stderr, "lupa: %s\n", err)
+		}
+		if errors.Is(err, errNothingReviewed) {
+			return 1
 		}
 		return 2
 	}
@@ -180,6 +188,7 @@ type reviewJSON struct {
 	Dropped  []droppedJSON  `json:"dropped"`
 	Ledger   []review.Entry `json:"ledger"`
 	Usage    usageJSON      `json:"usage"`
+	Notes    []string       `json:"notes"`
 }
 
 type findingJSON struct {
@@ -221,7 +230,14 @@ type usageJSON struct {
 
 func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 	r := reviewJSON{Schema: "lupa.review/v0", Base: base, Head: head, Findings: []findingJSON{}, Refuted: []refutedJSON{},
-		Dropped: []droppedJSON{}, Ledger: out.Ledger, Usage: usageJSON(out.Usage)}
+		Dropped: []droppedJSON{}, Ledger: []review.Entry{}, Usage: usageJSON(out.Usage), Notes: []string{}}
+	for _, e := range out.Ledger {
+		e.Reason = report.Redact(e.Reason)
+		r.Ledger = append(r.Ledger, e)
+	}
+	for _, n := range out.Notes {
+		r.Notes = append(r.Notes, report.Redact(n))
+	}
 	for _, f := range out.Findings {
 		r.Findings = append(r.Findings, findingJSONOf(f))
 	}
@@ -231,11 +247,8 @@ func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Citation: citation})
 	}
 	for _, d := range out.Dropped {
-		r.Dropped = append(r.Dropped, droppedJSON{Stage: d.Stage, Group: d.Group, Reason: d.Reason, File: d.Comment.File,
+		r.Dropped = append(r.Dropped, droppedJSON{Stage: d.Stage, Group: d.Group, Reason: report.Redact(d.Reason), File: d.Comment.File,
 			Claim: report.Redact(d.Comment.Claim), Quote: report.Redact(d.Comment.Quote)})
-	}
-	if r.Ledger == nil {
-		r.Ledger = []review.Entry{}
 	}
 	return r
 }
@@ -323,13 +336,16 @@ func runReview(args []string, env Env) error {
 	}
 	if asJSON {
 		_, err = env.Stdout.Write(saved)
-		return err
+	} else {
+		md := report.Review(report.ReviewInput{Base: signals.Base, Head: signals.Head, Out: out})
+		if _, err := st.Put(target, signals.Head, "review.md", md); err != nil {
+			return fmt.Errorf("saving the review: %w", err)
+		}
+		_, err = fmt.Fprintf(env.Stdout, "\n%s\nSaved: %s\n", md, filepath.Dir(path))
 	}
-	md := report.Review(report.ReviewInput{Base: signals.Base, Head: signals.Head, Out: out})
-	if _, err := st.Put(target, signals.Head, "review.md", md); err != nil {
-		return fmt.Errorf("saving the review: %w", err)
+	if err == nil && len(plan.Groups) > 0 && !slices.ContainsFunc(out.Ledger, func(e review.Entry) bool { return e.Status == review.Reviewed }) {
+		err = errNothingReviewed
 	}
-	_, err = fmt.Fprintf(env.Stdout, "\n%s\nSaved: %s\n", md, filepath.Dir(path))
 	return err
 }
 

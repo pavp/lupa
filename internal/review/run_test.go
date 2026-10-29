@@ -297,6 +297,31 @@ func TestRunReviewsGroupsInParallelAndKeepsGroupOrder(t *testing.T) {
 	}
 }
 
+func TestRunRecomputesTheCausalityOfAMergedFinding(t *testing.T) {
+	plan := runPlan(Options{})
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"},
+					comment("lib/tax.ts", "severe", "rate may be undefined at the end", "}", false),
+					comment("lib/tax.ts", "warning", "rate may be undefined here", taxQuote+"\n}", false)), nil
+			}
+			return answer([]string{"src/cart.ts"}), nil
+		},
+		refute: `{"results": []}`,
+	}
+	out := Run(context.Background(), f.input(plan))
+
+	if len(out.Findings) != 1 {
+		t.Fatalf("findings = %+v, want the two tax comments merged", out.Findings)
+	}
+	got := out.Findings[0].Finding
+	if got.Location.Start != 5 || got.Location.End != 6 || got.Causality != verify.CausalityIntroduced {
+		t.Errorf("survivor at %d-%d is %s, want 5-6 introduced: the widened range holds a changed line",
+			got.Location.Start, got.Location.End, got.Causality)
+	}
+}
+
 func TestRunRetriesAnUnusableAnswerOnce(t *testing.T) {
 	plan := runPlan(Options{})
 	taxRuns := 0

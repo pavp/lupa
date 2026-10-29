@@ -15,8 +15,8 @@ type ReviewInput struct {
 }
 
 // Review renders a verified review: every finding by level, worst first, then the pre-existing
-// follow-ups, the coverage and every dropped or refuted comment. No finding is capped; every
-// model-written text is redacted.
+// follow-ups, the coverage, every dropped or refuted comment and the run's notes. No finding is
+// capped; every model-written text and every error reason is redacted.
 func Review(in ReviewInput) []byte {
 	var b strings.Builder
 	out := in.Out
@@ -68,7 +68,7 @@ func Review(in ReviewInput) []byte {
 					b.WriteString("\n")
 					gaps = true
 				}
-				fmt.Fprintf(&b, "- %s: `%s`: %s\n", s.title, e.Path, e.Reason)
+				fmt.Fprintf(&b, "- %s: `%s`: %s\n", s.title, e.Path, Redact(e.Reason))
 			}
 		}
 	}
@@ -77,7 +77,7 @@ func Review(in ReviewInput) []byte {
 		b.WriteString("\n### Dropped\n\n")
 	}
 	for _, d := range out.Dropped {
-		fmt.Fprintf(&b, "- %s (group %d) · `%s`: %s", d.Stage, d.Group, d.Comment.File, d.Reason)
+		fmt.Fprintf(&b, "- %s (group %d) · `%s`: %s", d.Stage, d.Group, d.Comment.File, Redact(d.Reason))
 		if d.Comment.Claim != "" {
 			fmt.Fprintf(&b, " — %s", Redact(d.Comment.Claim))
 		}
@@ -86,6 +86,12 @@ func Review(in ReviewInput) []byte {
 	for _, r := range out.Refuted {
 		fmt.Fprintf(&b, "- refuted · `%s`: %s — citation `%s`\n",
 			span(r.Finding.Finding.Location), Redact(r.Finding.Finding.Comment.Claim), at(r.Citation.File, r.Citation.Line))
+	}
+	if len(out.Notes) > 0 {
+		b.WriteString("\n### Run notes\n\n")
+	}
+	for _, n := range out.Notes {
+		fmt.Fprintf(&b, "- %s\n", Redact(n))
 	}
 	return []byte(b.String())
 }
