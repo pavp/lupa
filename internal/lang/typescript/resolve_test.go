@@ -126,3 +126,27 @@ func TestExtendsList(t *testing.T) {
 		t.Errorf("Resolve = %q, %v; want src/lib/date.ts from the last config of the list", got, status)
 	}
 }
+
+func TestExtendsAGeneratedConfigThatIsNotInTheRepo(t *testing.T) {
+	contents := map[string]string{
+		"web/tsconfig.json": `{ "extends": "./.svelte-kit/tsconfig.json", "compilerOptions": { "baseUrl": ".", "paths": { "$lib/*": ["src/lib/*"] } } }`,
+		"web/src/lib/a.ts":  "",
+		"web/src/main.ts":   "",
+	}
+	files := make([]string, 0, len(contents))
+	for f := range contents {
+		files = append(files, f)
+	}
+	r, err := NewResolver(files, func(p string) ([]byte, error) {
+		if c, ok := contents[p]; ok {
+			return []byte(c), nil
+		}
+		return nil, errors.New(p + " missing")
+	})
+	if err != nil {
+		t.Fatalf("a config extending a generated file: %v", err)
+	}
+	if got, status := r.Resolve("web/src/main.ts", "$lib/a"); got != "web/src/lib/a.ts" || status != Resolved {
+		t.Errorf("Resolve = %q, %v; want the config's own paths to still apply", got, status)
+	}
+}
