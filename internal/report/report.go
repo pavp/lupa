@@ -9,7 +9,8 @@ import (
 )
 
 // Markdown renders the map: review now or hand back, risk worst first, reading order, questions for the
-// author. A hand-back stops after the risk section. Questions come only from deterministic signals.
+// author. A hand-back is advisory: the whole report is rendered whatever the size. Questions come only
+// from deterministic signals.
 func Markdown(s mapping.Signals) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## Lupa map — `%s..%s`\n\n", short(s.Base), short(s.Head))
@@ -67,10 +68,6 @@ func Markdown(s mapping.Signals) []byte {
 	for _, m := range s.TestsNotImportingSubject {
 		fmt.Fprintf(&b, "- Verification: `%s` does not import `%s`\n", m.Test, m.Subject)
 	}
-	if s.ReviewNow.Decision == mapping.HandBack {
-		return []byte(b.String())
-	}
-
 	b.WriteString("\n**Reading order**\n")
 	n := 0
 	for _, sec := range []struct {

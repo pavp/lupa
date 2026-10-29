@@ -59,7 +59,7 @@ func TestMarkdown(t *testing.T) {
 	}
 }
 
-func TestMarkdownHandBackStopsAfterRisk(t *testing.T) {
+func TestMarkdownHandBackKeepsTheWholeReport(t *testing.T) {
 	in := sample()
 	in.Files[4].Additions = 500
 	got := string(Markdown(mapping.Build(in)))
@@ -67,8 +67,10 @@ func TestMarkdownHandBackStopsAfterRisk(t *testing.T) {
 		!strings.Contains(got, `Suggested reply: "This change has 517 changed lines without generated files. Could you split it into smaller PRs?"`) {
 		t.Errorf("hand-back header or suggested reply missing:\n%s", got)
 	}
-	if !strings.Contains(got, "**Risk**") || strings.Contains(got, "**Reading order**") || strings.Contains(got, "**Questions") {
-		t.Errorf("a hand-back keeps the risk section and stops there:\n%s", got)
+	for _, section := range []string{"**Risk**", "**Reading order**", "**Questions for the author**"} {
+		if !strings.Contains(got, section) {
+			t.Errorf("a hand-back is advisory: the report must still carry %s, whatever the size:\n%s", section, got)
+		}
 	}
 }
 

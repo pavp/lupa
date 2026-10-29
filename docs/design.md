@@ -29,7 +29,7 @@ The product is code review. One binary, one entry point, `lupa review`, reachabl
 
 ### `lupa review <pr|branch>`
 
-1. **Map** (no LLM, seconds): review now or hand back, risk, reading order. On a hand-back it stops here and suggests a reply to the author.
+1. **Map** (no LLM, seconds): review now or hand back, risk, reading order. On a hand-back it suggests a reply to the author; the result is complete whatever the size.
 2. **Plan**: groups, files, agent runs and a cost estimate. Lupa then offers two choices: read the change first and come back (recommended, so the human read is not anchored by AI findings), or run the agent review now. Never forced.
 3. **Verified findings**: anchored comments (`file:line` + quote), pre-existing issues apart, coverage (reviewed and not reviewed), and how many comments were dropped and why.
 
@@ -72,7 +72,7 @@ Signals for a PR or a branch range:
 - reading order (read first / skim / skip), with the reason per file;
 - "since your last look": only what changed since the last mapped SHA.
 
-Output: a JSON file with a versioned schema, readable by other tools, and a local report. Report order: 1) review now or hand back with a suggested reply, 2) risk by category (impact, rollback cost, error detection, verification, alignment), worst first, no numeric score, 3) reading order with the why per file, 4) questions for the author with `file:line`, 5) description vs diff: each claim with one exact diff line found by a search, else `not found`. A hand-back stops after section 2.
+Output: a JSON file with a versioned schema, readable by other tools, and a local report. Report order: 1) review now or hand back with a suggested reply, 2) risk by category (impact, rollback cost, error detection, verification, alignment), worst first, no numeric score, 3) reading order with the why per file, 4) questions for the author with `file:line`, 5) description vs diff: each claim with one exact diff line found by a search, else `not found`. A hand-back is advisory: the whole report is shown whatever the size of the change.
 
 Head code is read without touching the user's checkout: `git fetch origin pull/<n>/head:refs/lupa/<n>`, then `git show <head>:<path>`. Never switch branches.
 
@@ -80,7 +80,7 @@ Head code is read without touching the user's checkout: `git fetch origin pull/<
 
 1. **[code]** Select reviewable files; keep a coverage ledger: reviewed, or skipped with a reason.
 2. **[code]** Assign review rules per file by path glob, from the language provider; drop items a linter already covers.
-3. **[code]** Group related files, with size limits that degrade to one file per group. Grouping is code, not a model call.
+3. **[code]** Group related files, with size limits that degrade to one file per group, then to a file split by hunks. Grouping is code, not a model call. Any size of change is reviewed in full: a bigger change means more groups and agent runs, shown with their cost in the plan before running. Only a single hunk that alone exceeds the prompt budget is left out, and the coverage ledger says so with the reason.
 4. **[agent]** Review each group in an isolated run with read-only tools (`Read`, `Grep`, `Glob`) inside a detached worktree at the PR head, so the reviewer can check callers outside the diff. The prompt carries, as quoted data under a byte budget (over budget → the group is split or reported as not reviewed, never truncated silently): the group's patch, the importers from the map as a starting hint, the rules, and the repo's `AGENTS.md` / `CLAUDE.md` read from the **base** branch so a PR cannot change its own review. Output is strict JSON: the list of files inspected (must equal the group), and per comment a severity, a claim, the mechanism, a fix, and an exact quote of the code it is about. "No findings" is an explicit empty list and the expected answer for most groups.
 5. **[code]** Validate the JSON: schema, files-inspected coverage, placeholder text rejected. A bad comment is dropped on its own; the rest of the group's output survives. Locate each quote: normalized consecutive-line match on the new side, then the old side, then the full new file; then a model-free unique match in another changed file. Still a miss → **[agent]** one relocation retry → still a miss, the comment is **dropped** and counted in the report.
 6. **[code]** Causality derived from changed hunks (`git diff --unified=0`), never taken from the model: `introduced` when the anchored lines sit inside an added hunk, `behavior-activated` when they sit in a changed file outside the hunks, `pre-existing` otherwise. A binary file or a file without hunks is `unknown`: never shown as introduced, never counted as proof of absence. Pre-existing comments move to a follow-up section.
