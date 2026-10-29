@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/verify"
@@ -243,8 +244,16 @@ func checkClaim(c ClaimCheck, claim, outcome, file, quote string, patches map[st
 		return c
 	}
 	want := strings.TrimSpace(quote)
+	unmarked := want
+	if strings.HasPrefix(want, "+") || strings.HasPrefix(want, "-") {
+		unmarked = strings.TrimSpace(want[1:])
+	}
 	for _, l := range verify.ChangedLines(patches[file]) {
-		if l.Text == want || l.Text == strings.TrimSpace(strings.TrimLeft(want, "+-")) {
+		// A line without a letter or digit, such as a lone brace, shows nothing a claim could say.
+		if !strings.ContainsFunc(l.Text, func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }) {
+			continue
+		}
+		if l.Text == want || l.Text == unmarked {
 			c.Outcome, c.File, c.Side, c.Line, c.Code = ClaimSupported, file, l.Side, l.N, l.Text
 			if isDoc(file) || isComment(l.Text) {
 				c.Outcome = ClaimMentioned
@@ -256,11 +265,16 @@ func checkClaim(c ClaimCheck, claim, outcome, file, quote string, patches map[st
 	return c
 }
 
-// commentMarks open a comment line in the languages Lupa reads; `*` continues a block comment.
-var commentMarks = []string{"//", "#", "/*", "*", "<!--", "--"}
+// commentMarks open a comment line in the languages Lupa reads; `*` continues a block comment. `#`, `*`
+// and `--` count only alone or before a space, so `#count = 0`, `*p = 1` and `--flag` stay code.
+var (
+	commentMarks = []string{"//", "/*", "*/", "<!--", "#!"}
+	spacedMarks  = []string{"#", "*", "--"}
+)
 
 func isComment(line string) bool {
-	return slices.ContainsFunc(commentMarks, func(m string) bool { return strings.HasPrefix(line, m) })
+	return slices.ContainsFunc(commentMarks, func(m string) bool { return strings.HasPrefix(line, m) }) ||
+		slices.ContainsFunc(spacedMarks, func(m string) bool { return line == m || strings.HasPrefix(line, m+" ") })
 }
 
 // namedFiles lists the changed files a sentence names by path or by file name.

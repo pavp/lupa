@@ -46,18 +46,25 @@ func (r Repo) run(args ...string) (string, error) {
 	return string(out), nil
 }
 
-// Remotes maps each remote's name to its configured URL, before any insteadOf rewrite.
-func (r Repo) Remotes() (map[string]string, error) {
+// Remotes maps each remote's name to its configured URL and, when url.<base>.insteadOf rewrites it,
+// the rewritten URL.
+func (r Repo) Remotes() (map[string][]string, error) {
 	out, err := r.run("config", "--get-regexp", `^remote\..*\.url$`)
-	remotes := map[string]string{}
+	remotes := map[string][]string{}
 	if err != nil {
 		// git config exits 1 when nothing matches: a clone with no remotes.
 		return remotes, nil
 	}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
 		key, url, ok := strings.Cut(line, " ")
-		if ok {
-			remotes[strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url")] = url
+		if !ok {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url")
+		remotes[name] = append(remotes[name], url)
+		// ls-remote applies url.<base>.insteadOf, which config leaves raw.
+		if resolved, err := r.run("ls-remote", "--get-url", name); err == nil && strings.TrimSpace(resolved) != url {
+			remotes[name] = append(remotes[name], strings.TrimSpace(resolved))
 		}
 	}
 	return remotes, nil
