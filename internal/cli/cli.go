@@ -22,7 +22,6 @@ import (
 	"github.com/pavp/lupa/internal/report"
 	"github.com/pavp/lupa/internal/review"
 	"github.com/pavp/lupa/internal/store"
-	"github.com/pavp/lupa/internal/verify"
 )
 
 const usage = "usage: lupa map <base>..<head> | <branch> [--json]\n       lupa review <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]"
@@ -273,7 +272,7 @@ func runReview(args []string, env Env) error {
 		return err
 	}
 	if !asJSON {
-		if _, err := io.WriteString(env.Stdout, planText(plan, target)); err != nil {
+		if _, err := io.WriteString(env.Stdout, planText(plan, target, !yes)); err != nil {
 			return err
 		}
 	}
@@ -313,14 +312,20 @@ func runReview(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	if _, err := (store.Store{Root: filepath.Join(gitDir, "lupa")}).Put(target, signals.Head, "review.json", saved); err != nil {
+	st := store.Store{Root: filepath.Join(gitDir, "lupa")}
+	path, err := st.Put(target, signals.Head, "review.json", saved)
+	if err != nil {
 		return fmt.Errorf("saving the review: %w", err)
 	}
 	if asJSON {
 		_, err = env.Stdout.Write(saved)
 		return err
 	}
-	_, err = io.WriteString(env.Stdout, summary(out))
+	md := report.Review(report.ReviewInput{Base: signals.Base, Head: signals.Head, Out: out})
+	if _, err := st.Put(target, signals.Head, "review.md", md); err != nil {
+		return fmt.Errorf("saving the review: %w", err)
+	}
+	_, err = fmt.Fprintf(env.Stdout, "%s\nSaved: %s\n", md, filepath.Dir(path))
 	return err
 }
 
@@ -366,19 +371,11 @@ func agentReview(repo git.Repo, head string, in review.RunInput) (out review.Run
 	return review.Run(context.Background(), in), nil
 }
 
-func summary(out review.RunOutput) string {
-	levels := map[string]int{}
-	for _, f := range out.Findings {
-		levels[f.Finding.Level]++
-	}
-	return fmt.Sprintf("%d findings: %d blocking, %d important, %d notes, %d follow-up · %d dropped · %d refuted · %d agent runs, $%.2f\n",
-		len(out.Findings), levels[verify.LevelBlocking], levels[verify.LevelImportant], levels[verify.LevelNote], levels[verify.LevelFollowUp],
-		len(out.Dropped), len(out.Refuted), out.Usage.Calls, out.Usage.CostUSD)
-}
-
-func planText(p review.Result, target string) string {
+// planText renders the plan; hint adds how to read the change first, for a user who is asked before the run.
+func planText(p review.Result, target string, hint bool) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Plan: %d groups, %d agent runs, about %d tokens (estimate)\n", len(p.Groups), p.Estimate.Runs, p.Estimate.Tokens)
+	fmt.Fprintf(&b, "Plan: %d %s, %d %s, about %d tokens (estimate)\n", len(p.Groups), plural(len(p.Groups), "group", "groups"),
+		p.Estimate.Runs, plural(p.Estimate.Runs, "agent run", "agent runs"), p.Estimate.Tokens)
 	for _, g := range p.Groups {
 		fmt.Fprintf(&b, "\nGroup %d (%d bytes)\n", g.ID, g.Bytes)
 		for _, part := range g.Parts {
@@ -409,8 +406,17 @@ func planText(p review.Result, target string) string {
 			fmt.Fprintf(&b, "  %s: %s\n", e.Path, e.Reason)
 		}
 	}
-	fmt.Fprintf(&b, "\nRead the change first (recommended): lupa map %s\nThen run the agent review: lupa review %s --yes\n", target, target)
+	if hint {
+		fmt.Fprintf(&b, "\nRead the change first (recommended): lupa map %s\nThen run the agent review: lupa review %s --yes\n", target, target)
+	}
 	return b.String()
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 // reachOf builds the import graph at head and keeps, per changed file, its importers outside the change
