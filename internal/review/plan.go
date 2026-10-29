@@ -18,6 +18,10 @@ const DefaultBudget = 60000
 // defaultOverhead stands in for the fixed part of a reviewer prompt when Options.Overhead is zero.
 const defaultOverhead = 4000
 
+// ReadingTokens stands in for what one reviewer reads with its tools beyond its prompt: callers,
+// importers, nearby files. It is an assumption until measured runs calibrate it.
+const ReadingTokens = 20000
+
 // Status says what happens to a changed file in the review.
 type Status string
 
@@ -114,7 +118,7 @@ func Plan(files []mapping.File, patches map[string]string, opts Options) Result 
 	slices.SortStableFunc(r.Ledger, func(a, b Entry) int { return cmp.Compare(a.Path, b.Path) })
 	overhead := cmp.Or(opts.Overhead, defaultOverhead)
 	for _, g := range r.Groups {
-		r.Estimate.Tokens += (g.Bytes + overhead + 3) / 4
+		r.Estimate.Tokens += (g.Bytes+overhead+3)/4 + ReadingTokens
 	}
 	if len(r.Groups) > 0 {
 		// One reviewer run per group, plus the filter run over the severe comments.

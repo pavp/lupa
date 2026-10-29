@@ -68,14 +68,14 @@ Output: reply with ONE JSON object and nothing else, with one result per finding
 Give a citation only for refuted; a refutation without one counts as inconclusive.
 `
 
-// Filter sends the important findings to one refuter run and removes those refuted with a
-// citation that code finds at its line. Every other finding stays, and a failed run or a
+// Filter sends the blocking and important findings to one refuter run and removes those refuted
+// with a citation that code finds at its line. Every other finding stays, and a failed run or a
 // malformed reply keeps them all.
 func Filter(ctx context.Context, in FilterInput) FilterResult {
 	res := FilterResult{Outcomes: map[int]string{}}
 	var eligible []int
 	for i, f := range in.Findings {
-		if f.Finding.Level == verify.LevelImportant {
+		if severe(f.Finding.Level) {
 			eligible = append(eligible, i)
 		}
 	}
@@ -135,7 +135,13 @@ func Filter(ctx context.Context, in FilterInput) FilterResult {
 }
 
 func isEligible(id int, findings []Anchored) bool {
-	return id >= 0 && id < len(findings) && findings[id].Finding.Level == verify.LevelImportant
+	return id >= 0 && id < len(findings) && severe(findings[id].Finding.Level)
+}
+
+// severe reports the levels the refuter checks: a blocking level rests partly on the model's own
+// word that its quote settles the claim, so it is checked like an important one.
+func severe(level string) bool {
+	return level == verify.LevelBlocking || level == verify.LevelImportant
 }
 
 // checkResult downgrades a refutation to inconclusive unless its cited quote is in the head

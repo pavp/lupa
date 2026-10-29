@@ -48,10 +48,9 @@ func claims(fs []Anchored) []string {
 	return out
 }
 
-func TestFilterSkipsFindingsThatAreNotImportant(t *testing.T) {
+func TestFilterSkipsFindingsThatAreNotSevere(t *testing.T) {
 	fake := replying(`{"results": []}`)
 	in := filterInput(fake,
-		leveled(verify.LevelBlocking, "blocking"),
 		leveled(verify.LevelNote, "note"),
 		leveled(verify.LevelFollowUp, "follow-up"),
 	)
@@ -60,7 +59,7 @@ func TestFilterSkipsFindingsThatAreNotImportant(t *testing.T) {
 	if fake.Calls() != 0 || res.Calls != 0 {
 		t.Fatalf("calls = %d, Calls = %d, want 0 and 0", fake.Calls(), res.Calls)
 	}
-	if got := strings.Join(claims(res.Kept), ","); got != "blocking,note,follow-up" {
+	if got := strings.Join(claims(res.Kept), ","); got != "note,follow-up" {
 		t.Errorf("kept = %q, want every finding in input order", got)
 	}
 	if len(res.Refuted) != 0 || len(res.Outcomes) != 0 {
@@ -68,7 +67,7 @@ func TestFilterSkipsFindingsThatAreNotImportant(t *testing.T) {
 	}
 }
 
-func TestFilterSendsOnlyImportantFindingsInOneCall(t *testing.T) {
+func TestFilterSendsBlockingAndImportantFindingsInOneCall(t *testing.T) {
 	var req agent.Request
 	fake := &agent.Fake{Reply: func(r agent.Request) (string, error) {
 		req = r
@@ -91,12 +90,10 @@ func TestFilterSendsOnlyImportantFindingsInOneCall(t *testing.T) {
 	if !strings.Contains(req.SystemPrompt, rubric) {
 		t.Error("system prompt lacks the severity rubric")
 	}
-	for _, c := range []string{"blocking claim", "note claim"} {
-		if strings.Contains(req.Prompt, c) {
-			t.Errorf("prompt carries %q, which must skip the refuter", c)
-		}
+	if strings.Contains(req.Prompt, "note claim") {
+		t.Error("prompt carries the note, which must skip the refuter")
 	}
-	for _, c := range []string{"first important claim", "second important claim"} {
+	for _, c := range []string{"blocking claim", "first important claim", "second important claim"} {
 		open := strings.Index(req.Prompt, "<<<LUPA-DATA finding ")
 		if open < 0 {
 			t.Fatal("prompt has no finding data block")
@@ -110,7 +107,7 @@ func TestFilterSendsOnlyImportantFindingsInOneCall(t *testing.T) {
 	if got := strings.Join(claims(res.Kept), ","); got != "blocking claim,first important claim,note claim,second important claim" {
 		t.Errorf("kept = %q, want every finding in input order", got)
 	}
-	want := map[int]string{1: OutcomeCorroborated, 3: OutcomeInconclusive}
+	want := map[int]string{0: OutcomeInconclusive, 1: OutcomeCorroborated, 3: OutcomeInconclusive}
 	if fmt.Sprint(res.Outcomes) != fmt.Sprint(want) {
 		t.Errorf("outcomes = %v, want %v", res.Outcomes, want)
 	}
@@ -135,6 +132,15 @@ func TestFilterRemovesAFindingRefutedWithAValidCitation(t *testing.T) {
 	}
 	if res.Outcomes[1] != OutcomeRefuted || res.Outcomes[0] != OutcomeInconclusive {
 		t.Errorf("outcomes = %v, want 0 inconclusive (no result) and 1 refuted", res.Outcomes)
+	}
+}
+
+func TestFilterRemovesABlockingFindingRefutedWithAValidCitation(t *testing.T) {
+	fake := replying(`{"results": [{"id": 0, "outcome": "refuted", "citation": {"file": "src/cart.ts", "line": 6, "quote": "if (!items) {"}}]}`)
+	res := Filter(context.Background(), filterInput(fake, leveled(verify.LevelBlocking, "blocking claim")))
+
+	if len(res.Kept) != 0 || len(res.Refuted) != 1 || res.Refuted[0].Finding.Finding.Comment.Claim != "blocking claim" {
+		t.Errorf("kept = %v, refuted = %v, want the blocking finding refuted", claims(res.Kept), res.Refuted)
 	}
 }
 
@@ -214,10 +220,10 @@ func TestFilterIgnoresUnknownAndDuplicateIDs(t *testing.T) {
 	]}`)
 	res := Filter(context.Background(), filterInput(fake,
 		leveled(verify.LevelImportant, "important"),
-		leveled(verify.LevelBlocking, "blocking"),
+		leveled(verify.LevelNote, "note"),
 	))
 
-	if got := strings.Join(claims(res.Kept), ","); got != "important,blocking" {
+	if got := strings.Join(claims(res.Kept), ","); got != "important,note" {
 		t.Errorf("kept = %q, want both findings", got)
 	}
 	if len(res.Refuted) != 0 {
