@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -249,4 +251,31 @@ func (r Repo) Patches(base, head string) (map[string]string, error) {
 		}
 	}
 	return patches, nil
+}
+
+// Worktree checks rev out in a detached worktree in a fresh directory outside the repository.
+// remove deletes the worktree and its directory; calling it again does nothing.
+func (r Repo) Worktree(rev string) (dir string, remove func() error, err error) {
+	commit, err := r.Commit(rev)
+	if err != nil {
+		return "", nil, err
+	}
+	parent, err := os.MkdirTemp("", "lupa-review-*")
+	if err != nil {
+		return "", nil, err
+	}
+	dir = filepath.Join(parent, "tree")
+	if _, err := r.run("worktree", "add", "--detach", "--quiet", dir, commit); err != nil {
+		return "", nil, errors.Join(err, os.RemoveAll(parent))
+	}
+	removed := false
+	remove = func() error {
+		if removed {
+			return nil
+		}
+		removed = true
+		_, err := r.run("worktree", "remove", "--force", dir)
+		return errors.Join(err, os.RemoveAll(parent))
+	}
+	return dir, remove, nil
 }
