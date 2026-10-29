@@ -149,4 +149,8 @@ func TestPlanEstimate(t *testing.T) {
 	if empty := Plan(nil, nil, Options{}); empty.Estimate != (Estimate{}) {
 		t.Errorf("empty estimate = %+v, want zero", empty.Estimate)
 	}
+	measured := Plan([]mapping.File{file("a.go")}, map[string]string{"a.go": hunk(1, 101)}, Options{Overhead: 9000})
+	if want := (Estimate{Runs: 2, Tokens: (101 + 9000 + 3) / 4}); measured.Estimate != want {
+		t.Errorf("estimate with a measured overhead = %+v, want %+v", measured.Estimate, want)
+	}
 }

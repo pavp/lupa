@@ -35,3 +35,21 @@ func TestSaveAndLast(t *testing.T) {
 		t.Error("keys are independent")
 	}
 }
+
+func TestPutWritesBesideTheMap(t *testing.T) {
+	s := Store{Root: filepath.Join(t.TempDir(), "lupa")}
+	head := "3333333333333333333333333333333333333333"
+	p, err := s.Put("feature/x", head, "review.json", []byte(`{"r":1}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(s.Root, "feature-x", "3333333", "review.json"); p != want {
+		t.Errorf("written at %q, want %q", p, want)
+	}
+	if got, err := os.ReadFile(p); err != nil || string(got) != `{"r":1}` {
+		t.Errorf("review.json = %q, %v", got, err)
+	}
+	if _, ok := s.Last("feature/x"); ok {
+		t.Error("Put must not record a last map")
+	}
+}
