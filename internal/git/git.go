@@ -177,3 +177,12 @@ func (b *BlobReader) Close() error {
 	b.stdin.Close()
 	return b.cmd.Wait()
 }
+
+// Show returns the content of path at rev; ok is false when the file does not exist there.
+func (r Repo) Show(rev, path string) (content []byte, ok bool) {
+	out, err := r.run("show", rev+":"+path)
+	if err != nil {
+		return nil, false
+	}
+	return []byte(out), true
+}
