@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -82,12 +83,15 @@ type fakeRun struct {
 	review   func(prompt string) (string, error)
 	relocate string
 	refute   string
+	mu       sync.Mutex
 	reqs     []agent.Request
 }
 
 func (f *fakeRun) input(plan Result) RunInput {
 	fake := &agent.Fake{Reply: func(req agent.Request) (string, error) {
+		f.mu.Lock()
 		f.reqs = append(f.reqs, req)
+		f.mu.Unlock()
 		switch req.SystemPrompt {
 		case relocateSystem:
 			return f.relocate, nil
@@ -177,14 +181,14 @@ func TestRunReviewsEveryGroupAndFiltersOnce(t *testing.T) {
 	if f.count(systemPrompt) != 2 || f.count(filterSystem) != 1 {
 		t.Fatalf("reviewer calls = %d, refuter calls = %d, want 2 and 1", f.count(systemPrompt), f.count(filterSystem))
 	}
-	refuter := f.reqs[2].Prompt
+	refuter := f.reqs[slices.IndexFunc(f.reqs, func(r agent.Request) bool { return r.SystemPrompt == filterSystem })].Prompt
 	if !strings.Contains(refuter, "ID: 0\n") || !strings.Contains(refuter, "ID: 1\n") {
 		t.Errorf("the one refuter run does not carry both findings:\n%s", refuter)
 	}
 	want := BuildPrompt(PromptInput{Patch: runTaxPatch, Paths: []string{"lib/tax.ts"},
 		Importers: map[string][]string{"lib/tax.ts": {"src/order.ts"}}, Conventions: []Convention{{Path: "AGENTS.md", Content: "Use tabs."}}})
-	first := f.reqs[0]
-	if first.SystemPrompt != want.System || first.Prompt != want.User || first.Dir != "/tmp/worktree" || first.Timeout != 2*time.Minute {
+	first := f.reqs[slices.IndexFunc(f.reqs, func(r agent.Request) bool { return group(r.Prompt, "lib/tax.ts") })]
+	if first.SystemPrompt != want.System || first.Prompt != want.User || first.Dir != "/tmp/worktree" || first.Timeout != 2*time.Minute || first.Schema != reviewSchema {
 		t.Errorf("first reviewer request = %+v, want the BuildPrompt of group 1 in the worktree with the timeout", first)
 	}
 	if wantUsage := (Usage{Calls: 3, CostUSD: 1.5, InputTokens: 300, OutputTokens: 30}); out.Usage != wantUsage {
@@ -248,6 +252,45 @@ func TestRunMarksAFailedGroupNotReviewedAndGoesOn(t *testing.T) {
 				t.Errorf("the plan's ledger was modified: %+v", plan.Ledger)
 			}
 		})
+	}
+}
+
+func TestRunReviewsGroupsInParallelAndKeepsGroupOrder(t *testing.T) {
+	plan := runPlan(Options{Budget: len(runCartPatch) - 1})
+	var mu sync.Mutex
+	inFlight, peak := 0, 0
+	f := &fakeRun{review: func(prompt string) (string, error) {
+		mu.Lock()
+		inFlight++
+		peak = max(peak, inFlight)
+		mu.Unlock()
+		defer func() { mu.Lock(); inFlight--; mu.Unlock() }()
+		switch {
+		case group(prompt, "lib/tax.ts"):
+			time.Sleep(150 * time.Millisecond)
+			return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "warning", "rate may be undefined", taxQuote, false)), nil
+		case strings.Contains(prompt, "@@ -10,3"):
+			time.Sleep(50 * time.Millisecond)
+			return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "warning", "qty may be undefined", cartQuote, false)), nil
+		}
+		return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "warning", "qty may be zero", countQuote, false)), nil
+	}}
+	in := f.input(plan)
+	in.Parallel = 2
+	out := Run(context.Background(), in)
+
+	if peak != 2 {
+		t.Errorf("peak concurrent reviewers = %d, want 2 (the limit)", peak)
+	}
+	var got []string
+	for _, a := range out.Findings {
+		got = append(got, a.Finding.Comment.Claim)
+	}
+	if want := []string{"rate may be undefined", "qty may be undefined", "qty may be zero"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("findings = %v, want group order %v", got, want)
+	}
+	if !reflect.DeepEqual(out.Ledger, plan.Ledger) || out.Usage.Calls != 3 {
+		t.Errorf("ledger = %+v, calls = %d, want the plan's ledger and 3 calls", out.Ledger, out.Usage.Calls)
 	}
 }
 
