@@ -49,10 +49,10 @@ func TestClassify(t *testing.T) {
 }
 
 func TestBuildExcludesGeneratedFromSize(t *testing.T) {
-	got := Build("b", "h", []File{
+	got := Build(Input{Base: "b", Head: "h", Files: []File{
 		{Path: "src/app.ts", Additions: 10, Deletions: 2},
 		{Path: "package-lock.json", Additions: 900, Deletions: 300},
-	}, Reach{})
+	}})
 	want := Size{Files: 1, Additions: 10, Deletions: 2, Changed: 12, GeneratedFiles: 1}
 	if got.Size != want {
 		t.Errorf("size = %+v, want %+v", got.Size, want)
@@ -63,17 +63,17 @@ func TestBuildExcludesGeneratedFromSize(t *testing.T) {
 }
 
 func TestBuildPromotesFilesWithOutsideImporters(t *testing.T) {
-	got := Build("b", "h", []File{
+	got := Build(Input{Base: "b", Head: "h", Files: []File{
 		{Path: "src/Badge.tsx", Additions: 3},
 		{Path: "src/auth/session.ts", Additions: 1},
 		{Path: "src/lonely.ts", Additions: 1},
-	}, Reach{
+	}, Reach: Reach{
 		Importers: map[string][]string{
 			"src/Badge.tsx":       {"src/a.tsx", "src/b.tsx"},
 			"src/auth/session.ts": {"src/app.ts"},
 		},
 		Unresolved: []Unresolved{{From: "src/Badge.tsx", Specifier: "./missing"}},
-	})
+	}})
 	badge, session, lonely := got.Files[0], got.Files[1], got.Files[2]
 	if badge.Class != ReadFirst || badge.Risk != Impact || badge.Reason != "imported by 2 files outside this change" || len(badge.Importers) != 2 {
 		t.Errorf("badge = %+v, want read-first impact with 2 importers", badge)

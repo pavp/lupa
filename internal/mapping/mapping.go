@@ -17,6 +17,8 @@ type File struct {
 	Reason    string `json:"reason"`
 	// Importers are the files outside this change that reach this one through imports, directly or not.
 	Importers []string `json:"importers,omitempty"`
+	// Owners come from the base branch's CODEOWNERS, so a change cannot pick its own reviewers.
+	Owners []string `json:"owners,omitempty"`
 }
 
 // Unresolved is an import in a changed file that names a repo file lupa could not find.
@@ -49,13 +51,41 @@ type Signals struct {
 	Files  []File `json:"files"`
 	Size   Size   `json:"size"`
 
+	ReviewNow    Gate           `json:"review_now"`
 	ReadingOrder []ReadingEntry `json:"reading_order"`
 	Unresolved   []Unresolved   `json:"unresolved"`
 }
 
-// Build computes the signals of the change from base to head.
-func Build(base, head string, files []File, reach Reach) Signals {
-	s := Signals{Schema: Schema, Base: base, Head: head, Files: make([]File, len(files)), Unresolved: reach.Unresolved}
+// Decision is whether to review the change now or hand it back to its author.
+type Decision string
+
+const (
+	Review   Decision = "review"
+	HandBack Decision = "hand-back"
+)
+
+// Gate is the review-now decision and why.
+type Gate struct {
+	Decision Decision `json:"decision"`
+	Reason   string   `json:"reason"`
+}
+
+// SizeBudget is the most changed lines, generated files excluded, a change can have and still be reviewed in one sitting.
+const SizeBudget = 400
+
+// Input is everything Build needs: the range, the changed files, what reaches them, and their owners.
+type Input struct {
+	Base   string
+	Head   string
+	Files  []File
+	Reach  Reach
+	Owners map[string][]string
+}
+
+// Build computes the signals of the change.
+func Build(in Input) Signals {
+	files, reach := in.Files, in.Reach
+	s := Signals{Schema: Schema, Base: in.Base, Head: in.Head, Files: make([]File, len(files)), Unresolved: reach.Unresolved}
 	if s.Unresolved == nil {
 		s.Unresolved = []Unresolved{}
 	}
@@ -63,6 +93,7 @@ func Build(base, head string, files []File, reach Reach) Signals {
 		rule := Classify(f.Path)
 		f.Class, f.Risk, f.Reason = rule.Class, rule.Risk, rule.Reason
 		f.Importers = reach.Importers[f.Path]
+		f.Owners = in.Owners[f.Path]
 		if len(f.Importers) > 0 && f.Class == Skim {
 			f.Class, f.Risk = ReadFirst, Impact
 			f.Reason = fmt.Sprintf("imported by %d %s outside this change", len(f.Importers), plural(len(f.Importers), "file", "files"))
@@ -77,6 +108,10 @@ func Build(base, head string, files []File, reach Reach) Signals {
 		s.Size.Deletions += f.Deletions
 	}
 	s.Size.Changed = s.Size.Additions + s.Size.Deletions
+	s.ReviewNow = Gate{Review, fmt.Sprintf("%d changed lines, generated excluded, within %d", s.Size.Changed, SizeBudget)}
+	if s.Size.Changed > SizeBudget {
+		s.ReviewNow = Gate{HandBack, fmt.Sprintf("%d changed lines, generated excluded, over %d: suggest a split", s.Size.Changed, SizeBudget)}
+	}
 	s.ReadingOrder = readingOrder(s.Files)
 	return s
 }

@@ -238,3 +238,50 @@ func TestMapReach(t *testing.T) {
 		t.Errorf("unresolved = %+v, want ./missing from src/Badge.ts", got.Unresolved)
 	}
 }
+
+func TestMapOwnersFromBaseAndGate(t *testing.T) {
+	dir, _, _ := newRepo(t)
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, ".github/CODEOWNERS", "*.go @go-team\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "owners")
+	gitCmd(t, dir, "switch", "-q", "feature")
+	gitCmd(t, dir, "merge", "-q", "main")
+	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, ".github/CODEOWNERS", "*.go @go-team\nb.go @intruder\n")
+	write(t, dir, "big.txt", strings.Repeat("line\n", 401))
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "change owners and grow")
+
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got struct {
+		Files []struct {
+			Path   string   `json:"path"`
+			Owners []string `json:"owners"`
+		} `json:"files"`
+		ReviewNow struct {
+			Decision string `json:"decision"`
+			Reason   string `json:"reason"`
+		} `json:"review_now"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	owners := map[string]string{}
+	for _, f := range got.Files {
+		owners[f.Path] = strings.Join(f.Owners, ",")
+	}
+	if owners["b.go"] != "@go-team" {
+		t.Errorf("owners of b.go = %q, want @go-team from the base CODEOWNERS, not the change's", owners["b.go"])
+	}
+	if got.ReviewNow.Decision != "hand-back" || !strings.Contains(got.ReviewNow.Reason, "suggest a split") {
+		t.Errorf("review_now = %+v, want hand-back suggesting a split", got.ReviewNow)
+	}
+}

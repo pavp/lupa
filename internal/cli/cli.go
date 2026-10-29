@@ -11,6 +11,7 @@ import (
 	"github.com/pavp/lupa/internal/git"
 	"github.com/pavp/lupa/internal/lang/typescript"
 	"github.com/pavp/lupa/internal/mapping"
+	"github.com/pavp/lupa/internal/owners"
 	"github.com/pavp/lupa/internal/reach"
 )
 
@@ -93,7 +94,7 @@ func runMap(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	signals := mapping.Build(base, head, files, r)
+	signals := mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files)})
 
 	if asJSON {
 		enc := json.NewEncoder(env.Stdout)
@@ -145,6 +146,25 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 		}
 	}
 	return out, nil
+}
+
+// ownersOf reads CODEOWNERS at the base, in GitHub's lookup order, so a change cannot assign its own owners.
+func ownersOf(repo git.Repo, base string, files []mapping.File) map[string][]string {
+	for _, loc := range []string{".github/CODEOWNERS", "CODEOWNERS", "docs/CODEOWNERS"} {
+		src, ok := repo.Show(base, loc)
+		if !ok {
+			continue
+		}
+		co := owners.Parse(src)
+		out := map[string][]string{}
+		for _, f := range files {
+			if o := co.Owners(f.Path); o != nil {
+				out[f.Path] = o
+			}
+		}
+		return out
+	}
+	return nil
 }
 
 // resolveRange turns `<from>..<to>` or `<branch>` into the merge-base and head commits, the diff a PR would show.

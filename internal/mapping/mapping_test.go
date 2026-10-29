@@ -16,7 +16,7 @@ func TestBuild(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got := Build("b", "h", c.files, Reach{})
+			got := Build(Input{Base: "b", Head: "h", Files: c.files})
 			if got.Schema != Schema || got.Base != "b" || got.Head != "h" {
 				t.Errorf("header = %q %q %q", got.Schema, got.Base, got.Head)
 			}

@@ -7,7 +7,7 @@ import (
 )
 
 func TestReadingOrder(t *testing.T) {
-	s := Build("b", "h", []File{
+	s := Build(Input{Base: "b", Head: "h", Files: []File{
 		{Path: "README.md"},
 		{Path: "package-lock.json"},
 		{Path: "src/auth/login.test.ts"},
@@ -20,7 +20,7 @@ func TestReadingOrder(t *testing.T) {
 		{Path: "src/auth/policy.ts"},
 		{Path: "db/migrations/001.sql"},
 		{Path: "src/session/expiry.test.ts"},
-	}, Reach{})
+	}})
 	want := []string{
 		"read-first db/migrations/001.sql",
 		"read-first src/auth/login.test.ts",
