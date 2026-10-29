@@ -57,9 +57,12 @@ func runCartHead() string {
 
 var runPatches = map[string]string{"lib/tax.ts": runTaxPatch, "src/cart.ts": runCartPatch}
 
-// runPlan plans lib/tax.ts and src/cart.ts next to a skipped generated file; the default budget
-// gives one group per file, tax first.
+// runPlan plans lib/tax.ts and src/cart.ts next to a skipped generated file; with no budget it
+// uses one small enough that each file gets its own group, tax first.
 func runPlan(opts Options) Result {
+	if opts.Budget == 0 {
+		opts.Budget = 400
+	}
 	files := []mapping.File{
 		file("lib/tax.ts"), file("src/cart.ts"),
 		{Path: "gen/api.pb.ts", Class: mapping.Skip, Reason: "protobuf output"},
