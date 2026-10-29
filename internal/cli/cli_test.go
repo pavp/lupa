@@ -136,9 +136,16 @@ func TestMapClassifiesAndExcludesGenerated(t *testing.T) {
 			Changed        int `json:"changed"`
 			GeneratedFiles int `json:"generated_files"`
 		} `json:"size"`
+		ReadingOrder []struct {
+			Path    string `json:"path"`
+			Section string `json:"section"`
+		} `json:"reading_order"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 		t.Fatal(err)
+	}
+	if n := len(got.ReadingOrder); n != 3 || got.ReadingOrder[2].Path != "package-lock.json" || got.ReadingOrder[2].Section != "skip" {
+		t.Errorf("reading_order = %+v, want 3 entries ending with the lockfile in skip", got.ReadingOrder)
 	}
 	if got.Size.Files != 2 || got.Size.Changed != 6 || got.Size.GeneratedFiles != 1 {
 		t.Errorf("size = %+v, want 2 files, 6 changed lines, 1 generated file", got.Size)
