@@ -50,6 +50,22 @@ func (r Ref) URL() string {
 	return fmt.Sprintf("https://%s/%s/%s/pull/%d", r.Host, r.Owner, r.Repo, r.Number)
 }
 
+// SameRepo reports whether a git remote URL (https, ssh or scp-like) points at ref's repo.
+func SameRepo(remote string, ref Ref) bool {
+	host, path, ok := "", "", false
+	if u, err := url.Parse(remote); err == nil && u.Host != "" {
+		host, path, ok = u.Hostname(), u.Path, true
+	} else if at, rest, found := strings.Cut(remote, "@"); found && !strings.Contains(at, "/") {
+		host, path, ok = strings.Cut(rest, ":")
+	}
+	if !ok {
+		return false
+	}
+	parts := strings.Split(strings.Trim(strings.TrimSuffix(path, ".git"), "/"), "/")
+	return len(parts) == 2 && strings.EqualFold(host, ref.Host) &&
+		strings.EqualFold(parts[0], ref.Owner) && strings.EqualFold(parts[1], ref.Repo)
+}
+
 // PR is what Lupa reads of a pull request.
 type PR struct {
 	Ref          Ref

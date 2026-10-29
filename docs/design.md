@@ -74,7 +74,7 @@ Signals for a PR or a branch range:
 
 Output: a JSON file with a versioned schema, readable by other tools, and a local report. Report order: 1) review now or hand back with a suggested reply, 2) risk by category (impact, rollback cost, error detection, verification, alignment), worst first, no numeric score, 3) reading order with the why per file, 4) questions for the author with `file:line`, 5) description vs diff: each claim with one exact diff line found by a search, else `not found`. A hand-back is advisory: the whole report is shown whatever the size of the change.
 
-Head code is read without touching the user's checkout: `git fetch origin pull/<n>/head:refs/lupa/<n>`, then `git show <head>:<path>`. Never switch branches.
+A PR is named by its number (`482`, `#482`) or its URL and read through `gh`. Head code is read without touching the user's checkout: the PR's head and base branch are fetched into `refs/lupa/pr/<n>/head` and `refs/lupa/pr/<n>/base` from the remote that points at the PR's repo, then `git show <head>:<path>`; the base is their merge-base. Never switch branches. A URL of a repo no remote points at fails with that reason.
 
 ### Agent review — LLM through an agent CLI, verified
 
