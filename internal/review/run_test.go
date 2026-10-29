@@ -12,6 +12,7 @@ import (
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/mapping"
+	"github.com/pavp/lupa/internal/verify"
 )
 
 const runTaxPatch = `diff --git a/lib/tax.ts b/lib/tax.ts
@@ -33,16 +34,23 @@ const runCartPatch = `diff --git a/src/cart.ts b/src/cart.ts
 -  for (const i of items) sum += i.price;
 +  for (const i of items) sum += i.price * i.qty;
    return sum;
+@@ -20,3 +20,3 @@ export function count(items) {
+   let n = 0;
+-  for (const i of items) n += 1;
++  for (const i of items) n += i.qty;
+   return n;
 `
 
 const (
-	taxQuote  = "  return amount * rate;"
-	cartQuote = "  for (const i of items) sum += i.price * i.qty;"
+	taxQuote   = "  return amount * rate;"
+	cartQuote  = "  for (const i of items) sum += i.price * i.qty;"
+	countQuote = "  for (const i of items) n += i.qty;"
 )
 
 func runCartHead() string {
 	lines := make([]string, 23)
 	lines[9], lines[10], lines[11] = "  let sum = 0;", cartQuote, "  return sum;"
+	lines[19], lines[20], lines[21] = "  let n = 0;", countQuote, "  return n;"
 	return strings.Join(lines, "\n") + "\n"
 }
 
@@ -69,18 +77,22 @@ func (b billed) Run(ctx context.Context, req agent.Request) (agent.Response, err
 	return resp, err
 }
 
-// fakeRun routes each request by its system prompt: reviewer or relocation.
+// fakeRun routes each request by its system prompt: reviewer, relocation or refuter.
 type fakeRun struct {
 	review   func(prompt string) (string, error)
 	relocate string
+	refute   string
 	reqs     []agent.Request
 }
 
 func (f *fakeRun) input(plan Result) RunInput {
 	fake := &agent.Fake{Reply: func(req agent.Request) (string, error) {
 		f.reqs = append(f.reqs, req)
-		if req.SystemPrompt == relocateSystem {
+		switch req.SystemPrompt {
+		case relocateSystem:
 			return f.relocate, nil
+		case filterSystem:
+			return f.refute, nil
 		}
 		return f.review(req.Prompt)
 	}}
@@ -143,7 +155,7 @@ func ledgerEntry(t *testing.T, ledger []Entry, path string) Entry {
 	return ledger[i]
 }
 
-func TestRunReviewsEveryGroup(t *testing.T) {
+func TestRunReviewsEveryGroupAndFiltersOnce(t *testing.T) {
 	plan := runPlan(Options{})
 	f := &fakeRun{
 		review: func(prompt string) (string, error) {
@@ -152,6 +164,7 @@ func TestRunReviewsEveryGroup(t *testing.T) {
 			}
 			return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "severe", "qty may be undefined", cartQuote, false)), nil
 		},
+		refute: `{"results": [{"id": 0, "outcome": "corroborated"}]}`,
 	}
 	out := Run(context.Background(), f.input(plan))
 
@@ -161,8 +174,12 @@ func TestRunReviewsEveryGroup(t *testing.T) {
 	if loc := out.Findings[1].Finding.Location; loc.Start != 11 || loc.End != 11 || loc.Side != "new" {
 		t.Errorf("cart finding located at %+v, want new side line 11", loc)
 	}
-	if f.count(systemPrompt) != 2 || len(f.reqs) != 2 {
-		t.Fatalf("reviewer calls = %d of %d, want 2 of 2", f.count(systemPrompt), len(f.reqs))
+	if f.count(systemPrompt) != 2 || f.count(filterSystem) != 1 {
+		t.Fatalf("reviewer calls = %d, refuter calls = %d, want 2 and 1", f.count(systemPrompt), f.count(filterSystem))
+	}
+	refuter := f.reqs[2].Prompt
+	if !strings.Contains(refuter, "ID: 0\n") || !strings.Contains(refuter, "ID: 1\n") {
+		t.Errorf("the one refuter run does not carry both findings:\n%s", refuter)
 	}
 	want := BuildPrompt(PromptInput{Patch: runTaxPatch, Paths: []string{"lib/tax.ts"},
 		Importers: map[string][]string{"lib/tax.ts": {"src/order.ts"}}, Conventions: []Convention{{Path: "AGENTS.md", Content: "Use tabs."}}})
@@ -170,14 +187,17 @@ func TestRunReviewsEveryGroup(t *testing.T) {
 	if first.SystemPrompt != want.System || first.Prompt != want.User || first.Dir != "/tmp/worktree" || first.Timeout != 2*time.Minute {
 		t.Errorf("first reviewer request = %+v, want the BuildPrompt of group 1 in the worktree with the timeout", first)
 	}
-	if wantUsage := (Usage{Calls: 2, CostUSD: 1, InputTokens: 200, OutputTokens: 20}); out.Usage != wantUsage {
+	if wantUsage := (Usage{Calls: 3, CostUSD: 1.5, InputTokens: 300, OutputTokens: 30}); out.Usage != wantUsage {
 		t.Errorf("usage = %+v, want %+v", out.Usage, wantUsage)
 	}
 	if !reflect.DeepEqual(out.Ledger, plan.Ledger) {
 		t.Errorf("ledger = %+v, want the plan's %+v", out.Ledger, plan.Ledger)
 	}
-	if len(out.Dropped) != 0 {
-		t.Errorf("dropped = %v, want none", out.Dropped)
+	if !slices.Contains(out.Notes, "id 1: no result, kept as inconclusive") {
+		t.Errorf("notes = %v, want the filter's note on id 1", out.Notes)
+	}
+	if len(out.Dropped) != 0 || len(out.Refuted) != 0 {
+		t.Errorf("dropped = %v, refuted = %v, want none", out.Dropped, out.Refuted)
 	}
 }
 
@@ -237,6 +257,7 @@ func TestRunListsEveryRemovedComment(t *testing.T) {
 			return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "severe", "qty may be undefined", "  return qty ?? 0;", true)), nil
 		},
 		relocate: `{"quote": ""}`,
+		refute:   `{"results": [{"id": 0, "outcome": "refuted", "citation": {"file": "lib/tax.ts", "line": 1, "quote": "import { rate } from \"./rate\";"}}]}`,
 	}
 	out := Run(context.Background(), f.input(runPlan(Options{})))
 
@@ -250,10 +271,44 @@ func TestRunListsEveryRemovedComment(t *testing.T) {
 	if anchor.Stage != StageAnchor || anchor.Reason != reasonNotFound || anchor.Comment.Claim != "qty may be undefined" {
 		t.Errorf("anchor drop = %+v", anchor)
 	}
-	if len(out.Findings) != 1 || out.Findings[0].Finding.Comment.Claim != "rate may be negative" {
-		t.Errorf("findings = %+v, want the tax finding that passed both stages", out.Findings)
+	if len(out.Refuted) != 1 || out.Refuted[0].Citation.Line != 1 || out.Refuted[0].Finding.Finding.Comment.Claim != "rate may be negative" {
+		t.Fatalf("refuted = %+v, want the tax finding with its citation", out.Refuted)
 	}
-	if want := (Usage{Calls: 3, CostUSD: 1.5, InputTokens: 300, OutputTokens: 30}); out.Usage != want {
-		t.Errorf("usage = %+v, want %+v over two reviewers and one relocation", out.Usage, want)
+	if len(out.Findings) != 0 {
+		t.Errorf("findings = %+v, want none", out.Findings)
+	}
+	if want := (Usage{Calls: 4, CostUSD: 2, InputTokens: 400, OutputTokens: 40}); out.Usage != want {
+		t.Errorf("usage = %+v, want %+v over two reviewers, one relocation and one refuter", out.Usage, want)
+	}
+}
+
+func TestRunMergesDuplicatesAcrossGroups(t *testing.T) {
+	plan := runPlan(Options{Budget: len(runCartPatch) - 1})
+	if got := layout(plan); !reflect.DeepEqual(got, []string{"1:lib/tax.ts", "2:src/cart.ts@10", "3:src/cart.ts@20"}) {
+		t.Fatalf("precondition: layout = %v, want the cart split over groups 2 and 3", got)
+	}
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			switch {
+			case group(prompt, "lib/tax.ts"):
+				return answer([]string{"lib/tax.ts"}), nil
+			case strings.Contains(prompt, "@@ -10,3"):
+				return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "warning", "qty may be undefined here", cartQuote, true)), nil
+			}
+			return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "severe", "qty may be undefined", "sum += qty", true)), nil
+		},
+		relocate: `{"quote": "` + cartQuote + `"}`,
+	}
+	out := Run(context.Background(), f.input(plan))
+
+	if len(out.Findings) != 1 {
+		t.Fatalf("findings = %+v, want the two cart comments merged into one", out.Findings)
+	}
+	got := out.Findings[0]
+	if got.Finding.Merged != 1 || got.Finding.Level != verify.LevelBlocking || !got.Relocated {
+		t.Errorf("survivor = %+v, want the relocated blocking comment that absorbed one", got)
+	}
+	if f.count(filterSystem) != 0 {
+		t.Errorf("refuter calls = %d, want 0 with no important finding", f.count(filterSystem))
 	}
 }
