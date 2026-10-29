@@ -46,6 +46,59 @@ func (r Repo) run(args ...string) (string, error) {
 	return string(out), nil
 }
 
+// Remotes maps each remote's name to its configured URL and, when url.<base>.insteadOf rewrites it,
+// the rewritten URL.
+func (r Repo) Remotes() (map[string][]string, error) {
+	out, err := r.run("config", "--get-regexp", `^remote\..*\.url$`)
+	remotes := map[string][]string{}
+	if err != nil {
+		// git config exits 1 when nothing matches: a clone with no remotes.
+		return remotes, nil
+	}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		key, url, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		name := strings.TrimSuffix(strings.TrimPrefix(key, "remote."), ".url")
+		remotes[name] = append(remotes[name], url)
+		// ls-remote applies url.<base>.insteadOf, which config leaves raw.
+		if resolved, err := r.run("ls-remote", "--get-url", name); err == nil && strings.TrimSpace(resolved) != url {
+			remotes[name] = append(remotes[name], strings.TrimSpace(resolved))
+		}
+	}
+	return remotes, nil
+}
+
+// CloneBlobless clones url into dir with history and trees but no file contents, which git fetches
+// when they are first read. dir must not exist yet.
+func CloneBlobless(url, dir string) error {
+	_, err := Repo{}.run("clone", "--quiet", "--filter=blob:none", "--no-checkout", url, dir)
+	return err
+}
+
+// Blobless reports a partial clone, whose file contents arrive on first read.
+func (r Repo) Blobless() bool {
+	out, err := r.run("config", "--get", "remote.origin.promisor")
+	return err == nil && strings.TrimSpace(out) == "true"
+}
+
+// Prefetch brings in every file content of rev in one request, by checking rev out in a throwaway
+// worktree; in a blobless clone, reading them one by one would cost a request each.
+func (r Repo) Prefetch(rev string) error {
+	_, remove, err := r.Worktree(rev)
+	if err != nil {
+		return err
+	}
+	return remove()
+}
+
+// Fetch fetches refspecs from remote without tags; it never touches the checkout.
+func (r Repo) Fetch(remote string, refspecs ...string) error {
+	_, err := r.run(append([]string{"fetch", "--quiet", "--no-tags", remote}, refspecs...)...)
+	return err
+}
+
 // Check fails with ErrNotRepository when Dir is not inside a git work tree.
 func (r Repo) Check() error {
 	if _, err := r.run("rev-parse", "--git-dir"); err != nil {

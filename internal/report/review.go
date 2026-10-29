@@ -50,6 +50,14 @@ func Review(in ReviewInput) []byte {
 		}
 	}
 
+	if len(out.Claims) > 0 {
+		b.WriteString("### Description vs diff (prose claims)\n\n")
+		for _, c := range out.Claims {
+			fmt.Fprintf(&b, "- \"%s\": %s\n", Redact(c.Sentence), claimOutcome(c))
+		}
+		b.WriteString("\n")
+	}
+
 	b.WriteString("### Coverage\n\n")
 	files := map[review.Status]map[string]bool{review.Reviewed: {}, review.Skipped: {}, review.NotReviewed: {}}
 	for _, e := range out.Ledger {
@@ -94,6 +102,32 @@ func Review(in ReviewInput) []byte {
 		fmt.Fprintf(&b, "- %s\n", Redact(n))
 	}
 	return []byte(b.String())
+}
+
+// citedLineLimit is the most characters of a cited line the text report shows; the JSON keeps it whole.
+const citedLineLimit = 120
+
+// shorten cuts s to limit characters, the last one an ellipsis.
+func shorten(s string, limit int) string {
+	if r := []rune(s); len(r) > limit {
+		return string(r[:limit-1]) + "…"
+	}
+	return s
+}
+
+// claimOutcome says what the diff shows for a claim. A cited line supports a claim; it does not prove it.
+func claimOutcome(c review.ClaimCheck) string {
+	switch c.Outcome {
+	case review.ClaimSupported:
+		return fmt.Sprintf("supported by `%s` (%s)", at(c.File, c.Line), inlineCode(shorten(Redact(c.Side+c.Code), citedLineLimit)))
+	case review.ClaimMentioned:
+		return fmt.Sprintf("only mentioned in a comment or docs: `%s` (%s)", at(c.File, c.Line), inlineCode(shorten(Redact(c.Side+c.Code), citedLineLimit)))
+	case review.ClaimUnsupported:
+		return "no supporting line in the diff"
+	case review.ClaimNotJudgeable:
+		return "cannot be judged from a diff"
+	}
+	return "not checked"
 }
 
 func writeFinding(b *strings.Builder, n int, a review.Anchored) {
