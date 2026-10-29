@@ -64,6 +64,9 @@ func Markdown(s mapping.Signals) []byte {
 	case len(code) > 0:
 		b.WriteString("- Verification: no test file changed\n")
 	}
+	for _, m := range s.TestsNotImportingSubject {
+		fmt.Fprintf(&b, "- Verification: `%s` does not import `%s`\n", m.Test, m.Subject)
+	}
 	if s.ReviewNow.Decision == mapping.HandBack {
 		return []byte(b.String())
 	}
@@ -98,6 +101,9 @@ func Markdown(s mapping.Signals) []byte {
 	}
 	for _, u := range s.Unresolved {
 		questions = append(questions, fmt.Sprintf("`%s` imports `%s`, which is not in the repo: is a file missing from this change?", at(u.From, u.Line), u.Specifier))
+	}
+	for _, m := range s.TestsNotImportingSubject {
+		questions = append(questions, fmt.Sprintf("`%s` is named like a test of `%s` but does not import it: does it exercise it?", at(m.Test, m.Line), m.Subject))
 	}
 	if len(tests) == 0 && len(code) > 0 {
 		questions = append(questions, "No test file changed: how was this change verified?")

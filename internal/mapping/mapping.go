@@ -35,6 +35,15 @@ type Unresolved struct {
 type Reach struct {
 	Importers  map[string][]string
 	Unresolved []Unresolved
+	// Imports are the resolved direct imports of changed files; nil when the language is not analyzed.
+	Imports map[string][]string
+}
+
+// TestMismatch is a test named after a changed file that does not import it, so it may not exercise it.
+type TestMismatch struct {
+	Test    string `json:"test"`
+	Subject string `json:"subject"`
+	Line    int    `json:"line"`
 }
 
 // Size totals the authored change; generated files are counted apart and add no lines.
@@ -59,6 +68,8 @@ type Signals struct {
 	SinceLastLook *LastLook      `json:"since_last_look"`
 	ReadingOrder  []ReadingEntry `json:"reading_order"`
 	Unresolved    []Unresolved   `json:"unresolved"`
+
+	TestsNotImportingSubject []TestMismatch `json:"tests_not_importing_subject"`
 }
 
 // LastLook is what changed since the last map of the same target.
@@ -123,7 +134,7 @@ func Build(in Input) Signals {
 	if s.Size.Changed > SizeBudget {
 		s.ReviewNow = Gate{HandBack, fmt.Sprintf("%d changed lines, generated excluded, over %d: suggest a split", s.Size.Changed, SizeBudget)}
 	}
-	s.ReadingOrder = readingOrder(s.Files)
+	s.ReadingOrder, s.TestsNotImportingSubject = readingOrder(s.Files, reach.Imports)
 	return s
 }
 

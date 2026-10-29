@@ -58,3 +58,34 @@ func TestReadingOrder(t *testing.T) {
 		}
 	}
 }
+
+func TestReadingOrderChecksTheTestImportsItsSubject(t *testing.T) {
+	s := Build(Input{Files: []File{
+		{Path: "src/Badge.tsx"},
+		{Path: "src/Badge.test.tsx", FirstLine: 1},
+		{Path: "src/Cart.tsx"},
+		{Path: "src/Cart.test.tsx"},
+	}, Reach: Reach{Imports: map[string][]string{
+		"src/Badge.test.tsx": {"src/Icon.tsx"},
+		"src/Cart.test.tsx":  {"src/Cart.tsx"},
+	}}})
+	var order []string
+	whys := map[string]string{}
+	for _, e := range s.ReadingOrder {
+		order = append(order, e.Path)
+		whys[e.Path] = e.Why
+	}
+	want := "src/Badge.test.tsx,src/Badge.tsx,src/Cart.test.tsx,src/Cart.tsx"
+	if strings.Join(order, ",") != want {
+		t.Errorf("order = %v, want %s", order, want)
+	}
+	if !strings.Contains(whys["src/Badge.test.tsx"], "does not import src/Badge.tsx") {
+		t.Errorf("a test that does not import its namesake must say so, got %q", whys["src/Badge.test.tsx"])
+	}
+	if !strings.Contains(whys["src/Cart.test.tsx"], "test of src/Cart.tsx") {
+		t.Errorf("a test that imports its subject is paired, got %q", whys["src/Cart.test.tsx"])
+	}
+	if len(s.TestsNotImportingSubject) != 1 || s.TestsNotImportingSubject[0].Test != "src/Badge.test.tsx" || s.TestsNotImportingSubject[0].Subject != "src/Badge.tsx" {
+		t.Errorf("tests_not_importing_subject = %+v", s.TestsNotImportingSubject)
+	}
+}

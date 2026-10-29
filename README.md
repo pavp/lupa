@@ -12,4 +12,16 @@ Lupa runs your agent's CLI (Claude Code, Pi) as its review engine and checks eve
 
 `lupa map` runs the first step alone.
 
-Status: design only. See [`docs/design.md`](docs/design.md).
+## Status
+
+`lupa map` works on local branch ranges; `lupa review` and GitHub PRs are next. See [`docs/design.md`](docs/design.md).
+
+```sh
+go install github.com/pavp/lupa/cmd/lupa@latest
+
+lupa map feature            # the branch against the default branch, as a PR would show it
+lupa map main..feature      # an explicit range
+lupa map feature --json     # the signals, schema in docs/signals-schema.md
+```
+
+The text report gives: review now or hand back, risk by category (no score), the reading order with the reason for each file, and questions for the author with `file:line`. Every map is saved under `.git/lupa/<target>/<short-sha>/`; the next run shows only what changed since then. TypeScript/JavaScript reach needs no `node_modules` and no Node.

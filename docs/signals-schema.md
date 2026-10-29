@@ -19,7 +19,8 @@
 | `size` | object | `files`, `additions`, `deletions`, `changed` (additions + deletions) over authored files; `generated_files` counts the skipped generated ones, which add no lines. |
 | `review_now` | object | `decision`: `review` or `hand-back`; `reason`. A change over 400 changed lines, generated excluded, is handed back. |
 | `since_last_look` | object or null | `null` on the first map of a target; else `since` (the last mapped head) and `files` changed since then. |
-| `reading_order[]` | array | `path`, `section` (`read-first`, `skim`, `skip`) and `why`. A test sits right before the file it tests. |
+| `reading_order[]` | array | `path`, `section` (`read-first`, `skim`, `skip`) and `why`. A test sits right before the file it tests when it imports it. |
+| `tests_not_importing_subject[]` | array | `test`, `subject` and `line` of a changed test named after a changed file that does not import it, so it may not exercise it. Tests are paired with their subject only when they import it. |
 | `unresolved[]` | array | `from`, `specifier` and `line` of imports in changed files that name a repo file lupa could not find. Reach states its limits instead of guessing. |
 
 Reach is approximate and language-agnostic: imports are found and resolved by code (relative paths, extensions, directory index, tsconfig `paths`/`baseUrl` with `extends`, workspace packages), never by a model.

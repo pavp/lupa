@@ -153,3 +153,61 @@ func TestBackendTraps(t *testing.T) {
 		}
 	}
 }
+
+// TestFrontendTraps maps a change to a shared Badge that now throws without a size. The map must surface
+// the four untouched callers, a test named after Badge that never imports it, the orphan snapshot and
+// the lockfile. Whether "no visual changes" holds is the agent review's call, not the map's.
+func TestFrontendTraps(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	badge := "export function Badge(label: string, size = 'md'): string {\n  return `[${size}] ${label}`;\n}\n"
+	writeTree(t, dir, map[string]string{
+		"tsconfig.json":                                  `{}`,
+		"package-lock.json":                              "{}\n",
+		"src/components/Badge.tsx":                       badge,
+		"src/components/Icon.tsx":                        "export const Icon = () => 'icon';\n",
+		"src/components/Header.tsx":                      "import { Badge } from './Badge';\nexport const Header = () => Badge('new');\n",
+		"src/pages/Home.tsx":                             "import { Badge } from '../components/Badge';\nexport const Home = () => Badge('home');\n",
+		"src/pages/Cart.tsx":                             "import { Badge } from '../components/Badge';\nexport const Cart = () => Badge('cart');\n",
+		"src/pages/Profile.tsx":                          "import { Badge } from '../components/Badge';\nexport const Profile = () => Badge('me');\n",
+		"src/components/__snapshots__/Old.test.tsx.snap": "exports[`Old 1`] = `old`;\n",
+	})
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	writeTree(t, dir, map[string]string{
+		"src/components/Badge.tsx": "export function Badge(label: string, size?: 'sm' | 'md'): string {\n" +
+			"  if (!size) throw new Error('size is required');\n  return `[${size}] ${label}`;\n}\n",
+		"src/components/Badge.test.tsx":                  "import { Icon } from './Icon';\nif (Icon() !== 'icon') throw new Error('icon');\n",
+		"src/components/__snapshots__/Old.test.tsx.snap": "exports[`Old 1`] = `older`;\n",
+		"package-lock.json":                              "{\n\"lockfileVersion\": 3\n}\n",
+	})
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "badge requires size; no visual changes")
+
+	m, md := mapTrap(t, dir)
+
+	if class, _, reason, importers := m.file(t, "src/components/Badge.tsx"); class != "read-first" ||
+		reason != "imported by 4 files outside this change" ||
+		importers != "src/components/Header.tsx,src/pages/Cart.tsx,src/pages/Home.tsx,src/pages/Profile.tsx" {
+		t.Errorf("Badge = %s %q %s, want read-first with its four untouched callers", class, reason, importers)
+	}
+	if class, _, _, _ := m.file(t, "src/components/__snapshots__/Old.test.tsx.snap"); class != "skip" {
+		t.Errorf("orphan snapshot = %s, want skip", class)
+	}
+	if class, _, _, _ := m.file(t, "package-lock.json"); class != "skip" || m.Size.GeneratedFiles != 2 {
+		t.Errorf("lockfile = %s with %d generated files, want skip and 2 generated (lockfile, snapshot)", class, m.Size.GeneratedFiles)
+	}
+	for _, want := range []string{
+		"- Verification: `src/components/Badge.test.tsx` does not import `src/components/Badge.tsx`",
+		"`src/components/Badge.test.tsx:1` is named like a test of `src/components/Badge.tsx` but does not import it: does it exercise it?",
+		"`src/components/Badge.tsx:1` is imported by 4 files outside this change: were they checked?",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("report lacks %q:\n%s", want, md)
+		}
+	}
+	if strings.Contains(md, "test of src/components/Badge.tsx: read it first") {
+		t.Errorf("a test that never imports Badge must not be presented as Badge's test:\n%s", md)
+	}
+}

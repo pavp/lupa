@@ -15,8 +15,9 @@ type ReadingEntry struct {
 
 // readingOrder puts read-first files first (one-way doors before impact), then skim, then skip.
 // A test goes right before the file it tests, in that file's section; a test whose subject is
-// not in the change opens the skim section.
-func readingOrder(files []File) []ReadingEntry {
+// not in the change opens the skim section. When imports are known, a test is paired with its namesake
+// only if it imports it; otherwise it is reported as a mismatch.
+func readingOrder(files []File, imports map[string][]string) ([]ReadingEntry, []TestMismatch) {
 	var code, tests []File
 	for _, f := range files {
 		if isTestPath(f.Path) && f.Class != Skip {
@@ -40,8 +41,16 @@ func readingOrder(files []File) []ReadingEntry {
 
 	before := map[string][]File{}
 	var orphans []File
+	why := map[string]string{}
+	mismatches := []TestMismatch{}
 	for _, t := range tests {
-		if subject, ok := subjectOf(t.Path, code); ok {
+		subject, ok := subjectOf(t.Path, code)
+		if imps, known := imports[t.Path]; ok && known && !contains(imps, subject) {
+			why[t.Path] = "named like a test of " + subject + " but does not import " + subject + ": it may not exercise it"
+			mismatches = append(mismatches, TestMismatch{Test: t.Path, Subject: subject, Line: t.FirstLine})
+			ok = false
+		}
+		if ok {
 			before[subject] = append(before[subject], t)
 		} else {
 			orphans = append(orphans, t)
@@ -57,7 +66,11 @@ func readingOrder(files []File) []ReadingEntry {
 			if t.Class == ReadFirst {
 				section = ReadFirst
 			}
-			out = append(out, ReadingEntry{t.Path, section, "test whose subject is not in this change"})
+			reason := why[t.Path]
+			if reason == "" {
+				reason = "test whose subject is not in this change"
+			}
+			out = append(out, ReadingEntry{t.Path, section, reason})
 		}
 		orphansPlaced = true
 	}
@@ -73,7 +86,16 @@ func readingOrder(files []File) []ReadingEntry {
 	if !orphansPlaced {
 		placeOrphans()
 	}
-	return out
+	return out, mismatches
+}
+
+func contains(items []string, want string) bool {
+	for _, it := range items {
+		if it == want {
+			return true
+		}
+	}
+	return false
 }
 
 // subjectOf finds the changed file a test exercises by matching stems: the same directory first,
