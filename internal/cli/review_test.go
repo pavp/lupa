@@ -12,6 +12,7 @@ import (
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/review"
+	"github.com/pavp/lupa/internal/verify"
 )
 
 type plan struct {
@@ -324,5 +325,23 @@ func TestReviewRunText(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "Plan: 1 group, 2 agent runs") {
 		t.Errorf("no plan:\n%s", stdout)
+	}
+}
+
+func TestReviewJSONRedacts(t *testing.T) {
+	secret := "ghp_" + strings.Repeat("a", 36)
+	c := verify.Comment{File: "a.go", Claim: "leaks " + secret, Mechanism: "token=" + secret, Fix: "drop " + secret, Quote: `password = "hunter2hunter2"`}
+	a := review.Anchored{Finding: verify.Finding{Comment: c, Location: verify.Location{File: "a.go", Start: 1, End: 1}}}
+	out := review.RunOutput{
+		Findings: []review.Anchored{a},
+		Refuted:  []review.RefutedFinding{{Finding: a, Citation: review.Citation{File: "a.go", Line: 2, Quote: "key " + secret}}},
+		Dropped:  []review.Drop{{Stage: review.StageAnchor, Comment: c}},
+	}
+	b, err := json.Marshal(reviewJSONOf("b", "h", out))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s := string(b); strings.Contains(s, "ghp_aaa") || strings.Contains(s, "hunter2") || !strings.Contains(s, `password = \"‹redacted›\"`) {
+		t.Errorf("JSON not redacted: %s", s)
 	}
 }
