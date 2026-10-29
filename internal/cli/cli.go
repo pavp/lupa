@@ -14,6 +14,7 @@ import (
 	"github.com/pavp/lupa/internal/mapping"
 	"github.com/pavp/lupa/internal/owners"
 	"github.com/pavp/lupa/internal/reach"
+	"github.com/pavp/lupa/internal/report"
 	"github.com/pavp/lupa/internal/store"
 )
 
@@ -88,9 +89,13 @@ func runMap(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
+	firstLines, err := repo.FirstChangedLines(base, head)
+	if err != nil {
+		return err
+	}
 	files := make([]mapping.File, len(changes))
 	for i, c := range changes {
-		files[i] = mapping.File{Path: c.Path, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary}
+		files[i] = mapping.File{Path: c.Path, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary, FirstLine: firstLines[c.Path]}
 	}
 	r, err := reachOf(repo, head, files)
 	if err != nil {
@@ -107,17 +112,18 @@ func runMap(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	if _, err := st.Save(target, head, append(saved, '\n'), nil); err != nil {
+	saved = append(saved, '\n')
+	md := report.Markdown(signals)
+	dir, err := st.Save(target, head, saved, md)
+	if err != nil {
 		return fmt.Errorf("saving the map: %w", err)
 	}
 
 	if asJSON {
-		enc := json.NewEncoder(env.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(signals)
+		_, err = env.Stdout.Write(saved)
+		return err
 	}
-	_, err = fmt.Fprintf(env.Stdout, "%d files, +%d -%d (%d changed lines)\n",
-		signals.Size.Files, signals.Size.Additions, signals.Size.Deletions, signals.Size.Changed)
+	_, err = fmt.Fprintf(env.Stdout, "%s\nSaved: %s · next time: only what changed since %s\n", md, dir, head[:7])
 	return err
 }
 
@@ -157,7 +163,7 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 	}
 	for _, u := range g.Unresolved {
 		if inChange[u.From] {
-			out.Unresolved = append(out.Unresolved, mapping.Unresolved{From: u.From, Specifier: u.Specifier})
+			out.Unresolved = append(out.Unresolved, mapping.Unresolved{From: u.From, Specifier: u.Specifier, Line: u.Line})
 		}
 	}
 	return out, nil

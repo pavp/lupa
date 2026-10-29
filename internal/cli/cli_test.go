@@ -157,13 +157,24 @@ func TestMapClassifiesAndExcludesGenerated(t *testing.T) {
 }
 
 func TestMapText(t *testing.T) {
-	dir, _, _ := newRepo(t)
+	dir, _, head := newRepo(t)
 	code, stdout, stderr := lupa(dir, "map", "feature")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr: %s", code, stderr)
 	}
-	if want := "2 files, +5 -1 (6 changed lines)\n"; stdout != want {
-		t.Errorf("stdout = %q, want %q", stdout, want)
+	saved := filepath.Join(gitCmd(t, dir, "rev-parse", "--absolute-git-dir"), "lupa", "feature", head[:7])
+	for _, want := range []string{
+		"**Review now? Yes** — 6 changed lines, generated excluded, within 400",
+		"**Reading order**",
+		"Saved: " + saved + " · next time: only what changed since " + head[:7],
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, stdout)
+		}
+	}
+	md, err := os.ReadFile(filepath.Join(saved, "map.md"))
+	if err != nil || !strings.HasPrefix(stdout, string(md)) {
+		t.Errorf("map.md (%v) must be the printed report without the Saved line", err)
 	}
 }
 
@@ -220,21 +231,23 @@ func TestMapReach(t *testing.T) {
 			Class     string   `json:"class"`
 			Reason    string   `json:"reason"`
 			Importers []string `json:"importers"`
+			FirstLine int      `json:"first_line"`
 		} `json:"files"`
 		Unresolved []struct {
 			From      string `json:"from"`
 			Specifier string `json:"specifier"`
+			Line      int    `json:"line"`
 		} `json:"unresolved"`
 	}
 	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
 		t.Fatal(err)
 	}
 	badge := got.Files[0]
-	if badge.Path != "src/Badge.ts" || badge.Class != "read-first" || badge.Reason != "imported by 2 files outside this change" ||
+	if badge.FirstLine != 1 || badge.Path != "src/Badge.ts" || badge.Class != "read-first" || badge.Reason != "imported by 2 files outside this change" ||
 		strings.Join(badge.Importers, ",") != "src/a.ts,src/index.ts" {
 		t.Errorf("Badge = %+v, want read-first, importers src/a.ts and src/index.ts (src/b.ts is in the change)", badge)
 	}
-	if len(got.Unresolved) != 1 || got.Unresolved[0].From != "src/Badge.ts" || got.Unresolved[0].Specifier != "./missing" {
+	if len(got.Unresolved) != 1 || got.Unresolved[0].From != "src/Badge.ts" || got.Unresolved[0].Specifier != "./missing" || got.Unresolved[0].Line != 1 {
 		t.Errorf("unresolved = %+v, want ./missing from src/Badge.ts", got.Unresolved)
 	}
 }

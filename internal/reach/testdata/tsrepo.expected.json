@@ -12,6 +12,6 @@
     "apps/web/src/api/client.ts": ["apps/web/src/lib/date.ts", "apps/web/src/utils/index.ts"]
   },
   "unresolved": [
-    {"from": "apps/web/src/broken.ts", "specifier": "./missing"}
+    {"from": "apps/web/src/broken.ts", "specifier": "./missing", "line": 1}
   ]
 }

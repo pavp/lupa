@@ -195,3 +195,36 @@ func (r Repo) GitDir() (string, error) {
 	}
 	return strings.TrimSpace(out), nil
 }
+
+// FirstChangedLines returns, per file, the first line the change touches on the head side.
+func (r Repo) FirstChangedLines(base, head string) (map[string]int, error) {
+	out, err := r.run("diff", "--unified=0", "--no-renames", "--no-color", base, head)
+	if err != nil {
+		return nil, err
+	}
+	lines := map[string]int{}
+	file := ""
+	for _, l := range strings.Split(out, "\n") {
+		switch {
+		case strings.HasPrefix(l, "+++ "):
+			file = strings.TrimPrefix(strings.TrimPrefix(l, "+++ "), "b/")
+			if file == "/dev/null" {
+				file = ""
+			}
+		case strings.HasPrefix(l, "@@ ") && file != "":
+			if _, seen := lines[file]; seen {
+				continue
+			}
+			// @@ -a,b +c,d @@: c is the first line on the head side.
+			fields := strings.Fields(l)
+			if len(fields) < 3 {
+				continue
+			}
+			start, _, _ := strings.Cut(strings.TrimPrefix(fields[2], "+"), ",")
+			if n, err := strconv.Atoi(start); err == nil {
+				lines[file] = max(n, 1)
+			}
+		}
+	}
+	return lines, nil
+}

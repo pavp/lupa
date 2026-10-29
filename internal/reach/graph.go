@@ -7,6 +7,7 @@ import "sort"
 type Unresolved struct {
 	From      string `json:"from"`
 	Specifier string `json:"specifier"`
+	Line      int    `json:"line"`
 }
 
 // Graph is a file-level import graph. Paths are repo-relative with forward slashes.

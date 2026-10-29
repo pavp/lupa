@@ -12,6 +12,8 @@ type File struct {
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 	Binary    bool   `json:"binary,omitempty"`
+	// FirstLine is the first changed line on the head side, 0 when the file was deleted.
+	FirstLine int    `json:"first_line,omitempty"`
 	Class     Class  `json:"class"`
 	Risk      Risk   `json:"risk"`
 	Reason    string `json:"reason"`
@@ -25,6 +27,7 @@ type File struct {
 type Unresolved struct {
 	From      string `json:"from"`
 	Specifier string `json:"specifier"`
+	Line      int    `json:"line"`
 }
 
 // Reach is what the import graph says about the change: importers outside it per changed file,
