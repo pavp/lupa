@@ -19,8 +19,9 @@ const DefaultBudget = 60000
 const defaultOverhead = 4000
 
 // ReadingTokens stands in for what one reviewer reads with its tools beyond its prompt: callers,
-// importers, nearby files. It is an assumption until measured runs calibrate it.
-const ReadingTokens = 20000
+// importers, nearby files, counted with cache reads. Measured on a 29-file React Native change:
+// 125k to 240k input tokens per reviewer run.
+const ReadingTokens = 150000
 
 // Status says what happens to a changed file in the review.
 type Status string
