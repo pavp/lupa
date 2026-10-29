@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -93,7 +94,7 @@ func TestReviewPlanText(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	for _, want := range []string{
-		"Plan: 1 groups, 2 agent runs, about ",
+		"Plan: 1 group, 2 agent runs, about ",
 		" tokens (estimate)",
 		"a.txt",
 		"package-lock.json: generated: lockfile",
@@ -285,9 +286,43 @@ func TestReviewRunAsks(t *testing.T) {
 				}
 				return
 			}
-			if want := "1 findings: 0 blocking, 1 important, 0 notes, 0 follow-up · 0 dropped · 0 refuted · 2 agent runs, $0.00\n"; len(reqs) != 2 || !strings.Contains(stdout, want) {
+			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 2 agent runs, $0.00\n"; len(reqs) != 2 || !strings.Contains(stdout, want) {
 				t.Errorf("agent calls %d, want summary %q in:\n%s", len(reqs), want, stdout)
 			}
 		})
+	}
+}
+
+func TestReviewRunText(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	dir, base, head := newRunRepo(t)
+	var reqs []agent.Request
+	code, stdout, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	saveDir := filepath.Join(dir, ".git", "lupa", "feature", head[:7])
+	md, err := os.ReadFile(filepath.Join(saveDir, "review.md"))
+	if err != nil {
+		t.Fatalf("review.md not saved: %v", err)
+	}
+	if !strings.HasPrefix(string(md), fmt.Sprintf("## Lupa review — `%s..%s`\n", base[:7], head[:7])) ||
+		!strings.Contains(string(md), "**1. B is exported mutable state** (`b.go:3` · introduced)") {
+		t.Errorf("review.md:\n%s", md)
+	}
+	real, err := filepath.EvalSymlinks(saveDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(stdout, string(md)+"\nSaved: "+real+"\n") {
+		t.Errorf("stdout does not end with the report and the saved dir %q:\n%s", real, stdout)
+	}
+	for _, hint := range []string{"Read the change first", "Then run the agent review", "Run the agent review now?"} {
+		if strings.Contains(stdout, hint) {
+			t.Errorf("--yes printed %q:\n%s", hint, stdout)
+		}
+	}
+	if !strings.Contains(stdout, "Plan: 1 group, 2 agent runs") {
+		t.Errorf("no plan:\n%s", stdout)
 	}
 }
