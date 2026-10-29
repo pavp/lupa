@@ -61,8 +61,8 @@ type RunOutput struct {
 const reasonUninspected = "the reviewer did not report inspecting it"
 
 // Run reviews each planned group in order, verifies and anchors its comments, then dedupes the
-// findings of every group and filters them in one refuter run. A failed group marks its files
-// not reviewed and the next group still runs.
+// findings of every group and filters them in one refuter run. An unusable answer gets one retry;
+// a failed group marks its files not reviewed and the next group still runs.
 func Run(ctx context.Context, in RunInput) RunOutput {
 	out := RunOutput{Ledger: slices.Clone(in.Plan.Ledger)}
 	ag := meter{Agent: in.Agent, usage: &out.Usage}
@@ -70,14 +70,9 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	for _, g := range in.Plan.Groups {
 		patch, paths := groupPatch(g)
 		p := BuildPrompt(PromptInput{Patch: patch, Paths: paths, Importers: in.Importers, Conventions: in.Conventions})
-		resp, err := ag.Run(ctx, agent.Request{Dir: in.Dir, SystemPrompt: p.System, Prompt: p.User, Timeout: in.Timeout})
-		if err != nil {
-			out.Ledger = markGroup(out.Ledger, paths, g.ID, "agent run failed: "+err.Error())
-			continue
-		}
-		parsed, err := verify.Parse(resp.Text, paths)
-		if err != nil {
-			out.Ledger = markGroup(out.Ledger, paths, g.ID, "reviewer output unusable: "+err.Error())
+		parsed, reason := reviewGroup(ctx, ag, agent.Request{Dir: in.Dir, SystemPrompt: p.System, Prompt: p.User, Timeout: in.Timeout, Schema: reviewSchema}, paths)
+		if reason != "" {
+			out.Ledger = markGroup(out.Ledger, paths, g.ID, reason)
 			continue
 		}
 		out.Ledger = markGroup(out.Ledger, parsed.Uninspected, g.ID, reasonUninspected)
@@ -98,6 +93,24 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	}
 	out.Notes = append(out.Notes, filtered.Notes...)
 	return out
+}
+
+// reviewGroup runs one reviewer and parses its answer, running it once more when the answer is
+// unusable. A non-empty reason means the group was not reviewed.
+func reviewGroup(ctx context.Context, ag agent.Agent, req agent.Request, paths []string) (verify.Result, string) {
+	for attempt := 0; ; attempt++ {
+		resp, err := ag.Run(ctx, req)
+		if err != nil {
+			return verify.Result{}, "agent run failed: " + err.Error()
+		}
+		parsed, err := verify.Parse(resp.Text, paths)
+		if err == nil {
+			return parsed, ""
+		}
+		if attempt == 1 {
+			return verify.Result{}, "reviewer output unusable after one retry: " + err.Error()
+		}
+	}
 }
 
 // groupPatch joins the patches of a group's parts, each already the whole file or its header

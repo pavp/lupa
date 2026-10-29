@@ -17,6 +17,8 @@ type Request struct {
 	Timeout time.Duration
 	// Model is optional; empty keeps the agent's default.
 	Model string
+	// Schema is an optional JSON Schema the final answer must follow, for agents that can enforce one.
+	Schema string
 }
 
 // Response is an agent's final answer with the usage it reported.

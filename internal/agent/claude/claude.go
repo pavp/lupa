@@ -28,15 +28,18 @@ type Adapter struct {
 }
 
 type envelope struct {
-	Type         string  `json:"type"`
-	Subtype      string  `json:"subtype"`
-	IsError      bool    `json:"is_error"`
-	Result       string  `json:"result"`
-	NumTurns     int     `json:"num_turns"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	Usage        struct {
-		InputTokens  int `json:"input_tokens"`
-		OutputTokens int `json:"output_tokens"`
+	Type             string          `json:"type"`
+	Subtype          string          `json:"subtype"`
+	IsError          bool            `json:"is_error"`
+	Result           string          `json:"result"`
+	StructuredOutput json.RawMessage `json:"structured_output"`
+	NumTurns         int             `json:"num_turns"`
+	TotalCostUSD     float64         `json:"total_cost_usd"`
+	Usage            struct {
+		InputTokens              int `json:"input_tokens"`
+		CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
+		CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+		OutputTokens             int `json:"output_tokens"`
 	} `json:"usage"`
 }
 
@@ -69,6 +72,9 @@ func (a Adapter) Run(ctx context.Context, req agent.Request) (agent.Response, er
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
+	if req.Schema != "" {
+		args = append(args, "--json-schema", req.Schema)
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = req.Dir
 	cmd.Stdin = strings.NewReader(req.Prompt)
@@ -95,11 +101,16 @@ func (a Adapter) Run(ctx context.Context, req agent.Request) (agent.Response, er
 	if env.IsError || env.Subtype != "success" {
 		return agent.Response{}, fmt.Errorf("claude: run failed (subtype %q): %s", env.Subtype, env.Result)
 	}
+	text := env.Result
+	if len(env.StructuredOutput) > 0 && string(env.StructuredOutput) != "null" {
+		text = string(env.StructuredOutput)
+	}
+	u := env.Usage
 	return agent.Response{
-		Text:         env.Result,
+		Text:         text,
 		CostUSD:      env.TotalCostUSD,
 		Turns:        env.NumTurns,
-		InputTokens:  env.Usage.InputTokens,
-		OutputTokens: env.Usage.OutputTokens,
+		InputTokens:  u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens,
+		OutputTokens: u.OutputTokens,
 	}, nil
 }

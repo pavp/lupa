@@ -90,6 +90,7 @@ func Filter(ctx context.Context, in FilterInput) FilterResult {
 		SystemPrompt: filterSystem,
 		Prompt:       filterPrompt(in.Findings, eligible),
 		Timeout:      in.Timeout,
+		Schema:       filterSchema,
 	})
 	var results []refuterResult
 	if err != nil {
