@@ -47,22 +47,26 @@ type Usage struct {
 	OutputTokens int
 }
 
-// RunOutput is the verified review: the anchored findings in group order, the dropped comments,
-// the plan's coverage ledger updated by the run and the usage.
+// RunOutput is the verified review: the findings that stay, the refuted ones, the dropped comments,
+// the plan's coverage ledger updated by the run, the usage and the filter's notes.
 type RunOutput struct {
 	Findings []Anchored
+	Refuted  []RefutedFinding
 	Dropped  []Drop
 	Ledger   []Entry
 	Usage    Usage
+	Notes    []string
 }
 
 const reasonUninspected = "the reviewer did not report inspecting it"
 
-// Run reviews each planned group in order, then verifies and anchors its comments. A failed group
-// marks its files not reviewed and the next group still runs.
+// Run reviews each planned group in order, verifies and anchors its comments, then dedupes the
+// findings of every group and filters them in one refuter run. A failed group marks its files
+// not reviewed and the next group still runs.
 func Run(ctx context.Context, in RunInput) RunOutput {
 	out := RunOutput{Ledger: slices.Clone(in.Plan.Ledger)}
 	ag := meter{Agent: in.Agent, usage: &out.Usage}
+	var anchored []Anchored
 	for _, g := range in.Plan.Groups {
 		patch, paths := groupPatch(g)
 		p := BuildPrompt(PromptInput{Patch: patch, Paths: paths, Importers: in.Importers, Conventions: in.Conventions})
@@ -84,8 +88,15 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 		for _, d := range res.Dropped {
 			out.Dropped = append(out.Dropped, Drop{Stage: StageAnchor, Group: g.ID, Reason: d.Reason, Comment: d.Comment})
 		}
-		out.Findings = append(out.Findings, res.Findings...)
+		anchored = append(anchored, res.Findings...)
 	}
+
+	filtered := Filter(ctx, FilterInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: dedupe(anchored), Head: in.Head})
+	out.Findings, out.Refuted = filtered.Kept, filtered.Refuted
+	if filtered.Note != "" {
+		out.Notes = append(out.Notes, filtered.Note)
+	}
+	out.Notes = append(out.Notes, filtered.Notes...)
 	return out
 }
 
@@ -122,6 +133,26 @@ func markGroup(ledger []Entry, paths []string, id int, reason string) []Entry {
 		ledger = slices.Insert(ledger, i+1, miss)
 	}
 	return ledger
+}
+
+// dedupe merges duplicate findings and gives each survivor back its Relocated flag. Survivors
+// keep their own comment and come out in input order, so they are matched as a subsequence.
+func dedupe(fs []Anchored) []Anchored {
+	plain := make([]verify.Finding, len(fs))
+	for i, f := range fs {
+		plain[i] = f.Finding
+	}
+	var out []Anchored
+	i := 0
+	for _, f := range verify.Dedupe(plain) {
+		for i < len(fs) && fs[i].Finding.Comment != f.Comment {
+			i++
+		}
+		relocated := i < len(fs) && fs[i].Relocated
+		out = append(out, Anchored{Finding: f, Relocated: relocated})
+		i++
+	}
+	return out
 }
 
 // meter sums the usage of every call it forwards; the run is sequential, so it needs no lock.
