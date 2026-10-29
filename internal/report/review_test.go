@@ -208,6 +208,7 @@ func TestReviewDescriptionVsDiff(t *testing.T) {
 		{Sentence: "Adds retries.", Outcome: review.ClaimUnsupported},
 		{Sentence: "Login is faster.", Outcome: review.ClaimNotJudgeable},
 		{Sentence: "Drops v1.", Outcome: review.ClaimNotChecked},
+		{Sentence: "Adds retries to login.", Outcome: review.ClaimMentioned, File: "src/login.ts", Side: "+", Line: 2, Code: "// retries"},
 	}}}))
 	for _, want := range []string{
 		"### Description vs diff (prose claims)\n\n",
@@ -215,6 +216,7 @@ func TestReviewDescriptionVsDiff(t *testing.T) {
 		"- \"Adds retries.\": no supporting line in the diff\n",
 		"- \"Login is faster.\": cannot be judged from a diff\n",
 		"- \"Drops v1.\": not checked\n",
+		"- \"Adds retries to login.\": only mentioned in a comment or docs: `src/login.ts:2` (`+// retries`)\n",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("review lacks %q:\n%s", want, got)

@@ -78,6 +78,40 @@ func TestCheckClaims(t *testing.T) {
 	}
 }
 
+const notedPatch = `diff --git a/src/retry.ts b/src/retry.ts
+--- a/src/retry.ts
++++ b/src/retry.ts
+@@ -1,1 +1,2 @@
++// Retries the login three times.
+ export const login = () => post();
+diff --git a/README.md b/README.md
+--- a/README.md
++++ b/README.md
+@@ -1,0 +1,1 @@
++Login now retries three times.
+`
+
+func TestCheckClaimsOnlyMentioned(t *testing.T) {
+	const retries = "Login retries three times."
+	retry, readme := notedPatch[:strings.Index(notedPatch, "diff --git a/README.md")], notedPatch[strings.Index(notedPatch, "diff --git a/README.md"):]
+	cases := []struct{ name, file, quote string }{
+		{"a comment line", "src/retry.ts", "// Retries the login three times."},
+		{"a documentation line", "README.md", "Login now retries three times."},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			fake := &agent.Fake{Reply: func(agent.Request) (string, error) {
+				return `{"results":[{"id":0,"claim":"Login retries three times","outcome":"supported","file":"` + c.file + `","quote":"` + c.quote + `"}]}`, nil
+			}}
+			res := CheckClaims(context.Background(), ClaimsInput{Agent: fake, Sentences: []string{retries},
+				Patches: map[string]string{"src/retry.ts": retry, "README.md": readme}})
+			if got := res.Checks[0]; got.Outcome != ClaimMentioned || got.File != c.file || got.Code != c.quote {
+				t.Errorf("check = %+v, want only mentioned in %s", got, c.file)
+			}
+		})
+	}
+}
+
 func TestCheckClaimsWithoutAUsableRun(t *testing.T) {
 	cases := []struct {
 		name, reply string
@@ -106,7 +140,7 @@ func TestCheckClaimsWithoutAUsableRun(t *testing.T) {
 }
 
 // bigPatch is one hunk of about the budget, so the login patch and it go in separate chunks.
-var bigPatch = "diff --git a/z.ts b/z.ts\n--- a/z.ts\n+++ b/z.ts\n@@ -1,0 +1,1 @@\n+export const big = 1;\n" + strings.Repeat(" filler\n", DefaultBudget/8)
+var bigPatch = "diff --git a/z.ts b/z.ts\n--- a/z.ts\n+++ b/z.ts\n@@ -1,0 +1,2 @@\n+export const big = 1;\n+// filler\n" + strings.Repeat(" filler\n", DefaultBudget/8)
 
 func TestCheckClaimsInChunks(t *testing.T) {
 	const login = "Login reads the user from the cache."
@@ -126,6 +160,8 @@ func TestCheckClaimsInChunks(t *testing.T) {
 		{"unsupported only when every chunk says so", result("unsupported", "", ""), result("unsupported", "", ""), nil, ClaimUnsupported, ""},
 		{"a failed chunk leaves an unsupported claim not checked", result("unsupported", "", ""), "", errors.New("timeout"), ClaimNotChecked, ""},
 		{"not judgeable in one chunk wins over unsupported", result("not_judgeable", "", ""), result("unsupported", "", ""), nil, ClaimNotJudgeable, ""},
+		{"code in one chunk wins over a mention in another", result("supported", "src/login.ts", "const user = await cache.users.get(id);"), result("supported", "z.ts", "// filler"), nil, ClaimSupported, "src/login.ts"},
+		{"a mention wins over unsupported", result("unsupported", "", ""), result("supported", "z.ts", "// filler"), nil, ClaimMentioned, "z.ts"},
 		{"a chunk's invented quote does not support", result("unsupported", "", ""), result("supported", "z.ts", "export const login = cache;"), nil, ClaimUnsupported, ""},
 	}
 	for _, c := range cases {
