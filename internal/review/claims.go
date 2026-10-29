@@ -68,10 +68,12 @@ Output: reply with ONE JSON object and nothing else, with one result per sentenc
 Give file and quote only for supported. When the sentence names a file, cite a line of that file. Answer unsupported rather than citing a line that does not show the claim.
 `
 
-// CheckClaims sends the sentences and the diff to one run and keeps each answer only as far as code can
-// check it: the claim must be part of its sentence, and a supported claim must cite an added or removed
-// line of a changed file, of the file the sentence names when it names one. A failed check downgrades
-// the result; a failed run, a malformed reply, or a diff over DefaultBudget leaves every sentence not checked.
+// CheckClaims sends the sentences with the diff to one run per chunk of at most DefaultBudget bytes and
+// keeps each answer only as far as code can check it: the claim must be part of its sentence, and a
+// supported claim must cite an added or removed line of a changed file, of the file the sentence names
+// when it names one; a failed check downgrades the answer to unsupported. Across chunks a sentence is
+// supported when any chunk supports it, unsupported only when every chunk says so, and otherwise not
+// judgeable when a chunk says so; a failed run or a malformed reply leaves its chunk without answers.
 func CheckClaims(ctx context.Context, in ClaimsInput) ClaimsResult {
 	var res ClaimsResult
 	for _, s := range in.Sentences {
@@ -80,33 +82,67 @@ func CheckClaims(ctx context.Context, in ClaimsInput) ClaimsResult {
 	if len(in.Sentences) == 0 {
 		return res
 	}
-	paths := make([]string, 0, len(in.Patches))
-	for p := range in.Patches {
-		paths = append(paths, p)
-	}
-	slices.Sort(paths)
-	var diff strings.Builder
-	for _, p := range paths {
-		diff.WriteString(in.Patches[p])
-	}
-	if diff.Len() > DefaultBudget {
-		res.Notes = append(res.Notes, fmt.Sprintf("claims not checked: the diff is %d bytes, over the %d-byte budget", diff.Len(), DefaultBudget))
-		return res
-	}
-
 	var sentences strings.Builder
 	for i, s := range in.Sentences {
 		fmt.Fprintf(&sentences, "%d. %s\n", i, s)
 	}
-	var b strings.Builder
-	b.WriteString(claimsTask)
-	writeBlocks(&b, []block{{"description", sentences.String()}, {"change", diff.String()}})
+	chunks := claimChunks(in.Patches)
+	answers := make([][]ClaimCheck, len(chunks))
+	for k, diff := range chunks {
+		note := func(n string) {
+			if len(chunks) > 1 {
+				n = fmt.Sprintf("chunk %d of %d: %s", k+1, len(chunks), n)
+			}
+			res.Notes = append(res.Notes, "claim check: "+n)
+		}
+		var b strings.Builder
+		b.WriteString(claimsTask)
+		writeBlocks(&b, []block{{"description", sentences.String()}, {"change", diff}})
+		res.Calls++
+		answers[k] = checkChunk(ctx, in, b.String(), res.Checks, note)
+	}
+	for i := range res.Checks {
+		res.Checks[i] = mergeChunks(res.Checks[i], answers, i)
+	}
+	return res
+}
 
-	res.Calls++
-	resp, err := in.Agent.Run(ctx, agent.Request{Dir: in.Dir, SystemPrompt: claimsSystem, Prompt: b.String(), Timeout: in.Timeout, Schema: claimsSchema})
+// mergeChunks combines one sentence's answers across chunks: the first supported answer, else
+// unsupported when every chunk answered unsupported, else the first not judgeable answer.
+func mergeChunks(c ClaimCheck, answers [][]ClaimCheck, i int) ClaimCheck {
+	unsupported := 0
+	var notJudgeable *ClaimCheck
+	for _, a := range answers {
+		switch a[i].Outcome {
+		case ClaimSupported:
+			return a[i]
+		case ClaimUnsupported:
+			if unsupported++; unsupported == 1 {
+				c.Claim = a[i].Claim
+			}
+		case ClaimNotJudgeable:
+			if notJudgeable == nil {
+				notJudgeable = &a[i]
+			}
+		}
+	}
+	switch {
+	case notJudgeable != nil:
+		return *notJudgeable
+	case unsupported == len(answers):
+		c.Outcome = ClaimUnsupported
+		return c
+	}
+	return ClaimCheck{Sentence: c.Sentence, Outcome: ClaimNotChecked}
+}
+
+// checkChunk runs one chunk and returns an answer per sentence, not checked where it gave none.
+func checkChunk(ctx context.Context, in ClaimsInput, prompt string, blank []ClaimCheck, note func(string)) []ClaimCheck {
+	out := slices.Clone(blank)
+	resp, err := in.Agent.Run(ctx, agent.Request{Dir: in.Dir, SystemPrompt: claimsSystem, Prompt: prompt, Timeout: in.Timeout, Schema: claimsSchema})
 	if err != nil {
-		res.Notes = append(res.Notes, "claim check failed: "+err.Error())
-		return res
+		note("failed: " + err.Error())
+		return out
 	}
 	var reply struct {
 		Results []struct {
@@ -115,33 +151,70 @@ func CheckClaims(ctx context.Context, in ClaimsInput) ClaimsResult {
 		} `json:"results"`
 	}
 	if err := decodeOne(resp.Text, &reply); err != nil {
-		res.Notes = append(res.Notes, "claim check reply malformed: "+err.Error())
-		return res
+		note("reply malformed: " + err.Error())
+		return out
 	}
 	seen := map[int]bool{}
 	for _, r := range reply.Results {
 		switch {
-		case r.ID == nil || *r.ID < 0 || *r.ID >= len(in.Sentences):
-			res.Notes = append(res.Notes, "claim check: ignored a result for an unknown id")
+		case r.ID == nil || *r.ID < 0 || *r.ID >= len(out):
+			note("ignored a result for an unknown id")
 		case seen[*r.ID]:
-			res.Notes = append(res.Notes, fmt.Sprintf("claim check: ignored a duplicate result for id %d", *r.ID))
+			note(fmt.Sprintf("ignored a duplicate result for id %d", *r.ID))
 		default:
 			seen[*r.ID] = true
-			res.Checks[*r.ID] = checkClaim(res.Checks[*r.ID], r.Claim, r.Outcome, r.File, r.Quote, in.Patches, &res.Notes, *r.ID)
+			out[*r.ID] = checkClaim(out[*r.ID], r.Claim, r.Outcome, r.File, r.Quote, in.Patches, note, *r.ID)
 		}
 	}
-	for i := range in.Sentences {
+	for i := range out {
 		if !seen[i] {
-			res.Notes = append(res.Notes, fmt.Sprintf("claim check: id %d: no result, not checked", i))
+			note(fmt.Sprintf("id %d: no result, not checked", i))
 		}
 	}
-	return res
+	return out
 }
 
-func checkClaim(c ClaimCheck, claim, outcome, file, quote string, patches map[string]string, notes *[]string, id int) ClaimCheck {
+// claimChunks packs the patches, by path, into chunks of at most DefaultBudget bytes; a file over the
+// budget is cut at its hunks, each piece keeping the file header, and a hunk over it goes alone.
+func claimChunks(patches map[string]string) []string {
+	paths := make([]string, 0, len(patches))
+	for p := range patches {
+		paths = append(paths, p)
+	}
+	slices.Sort(paths)
+	var pieces []string
+	for _, p := range paths {
+		if len(patches[p]) <= DefaultBudget {
+			pieces = append(pieces, patches[p])
+			continue
+		}
+		head, hunks := hunksOf(patches[p])
+		piece := head
+		for _, h := range hunks {
+			if piece != head && len(piece)+len(h) > DefaultBudget {
+				pieces = append(pieces, piece)
+				piece = head
+			}
+			piece += h
+		}
+		pieces = append(pieces, piece)
+	}
+	var chunks []string
+	cur := ""
+	for _, p := range pieces {
+		if cur != "" && len(cur)+len(p) > DefaultBudget {
+			chunks = append(chunks, cur)
+			cur = ""
+		}
+		cur += p
+	}
+	return append(chunks, cur)
+}
+
+func checkClaim(c ClaimCheck, claim, outcome, file, quote string, patches map[string]string, note func(string), id int) ClaimCheck {
 	claim = strings.TrimSpace(claim)
 	if claim == "" || !strings.Contains(c.Sentence, claim) {
-		*notes = append(*notes, fmt.Sprintf("claim check: id %d: claim is not part of its sentence, not checked", id))
+		note(fmt.Sprintf("id %d: claim is not part of its sentence, not checked", id))
 		return c
 	}
 	c.Claim = claim
@@ -151,12 +224,12 @@ func checkClaim(c ClaimCheck, claim, outcome, file, quote string, patches map[st
 		return c
 	case ClaimSupported:
 	default:
-		*notes = append(*notes, fmt.Sprintf("claim check: id %d: unknown outcome %q, not checked", id, outcome))
+		note(fmt.Sprintf("id %d: unknown outcome %q, not checked", id, outcome))
 		return c
 	}
 	c.Outcome = ClaimUnsupported
 	if named := namedFiles(c.Sentence, patches); len(named) > 0 && !slices.Contains(named, file) {
-		*notes = append(*notes, fmt.Sprintf("claim check: id %d: cited %s, but the sentence names %s", id, file, strings.Join(named, ", ")))
+		note(fmt.Sprintf("id %d: cited %s, but the sentence names %s", id, file, strings.Join(named, ", ")))
 		return c
 	}
 	want := strings.TrimSpace(quote)
@@ -166,7 +239,7 @@ func checkClaim(c ClaimCheck, claim, outcome, file, quote string, patches map[st
 			return c
 		}
 	}
-	*notes = append(*notes, fmt.Sprintf("claim check: id %d: quote is not a changed line of %s", id, file))
+	note(fmt.Sprintf("id %d: quote is not a changed line of %s", id, file))
 	return c
 }
 
@@ -181,3 +254,6 @@ func namedFiles(sentence string, patches map[string]string) []string {
 	slices.Sort(named)
 	return named
 }
+
+// ClaimRuns is how many runs CheckClaims makes over these patches: one per chunk.
+func ClaimRuns(patches map[string]string) int { return len(claimChunks(patches)) }
