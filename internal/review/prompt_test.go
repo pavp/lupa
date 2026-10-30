@@ -45,13 +45,15 @@ func TestBuildPromptSystem(t *testing.T) {
 func TestBuildPromptUserContent(t *testing.T) {
 	user := BuildPrompt(promptInput()).User
 	for _, want := range []string{
-		"severe only when the change causes it, realistic input reaches it, and it names an observable harm; otherwise at most a warning.",
-		"Style or suspicion is not a finding.",
+		"List every candidate defect this change could introduce",
+		"Do not filter: Lupa investigates each candidate against the code afterwards",
+		"expect about 5 to 10 candidates per group", "read callers and callees with your tools",
+		"Severity: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning.",
+		"Style is not a candidate.",
 		"pre-existing issues", "nitpicks", "anything a linter catches", "general quality or test coverage remarks", "outside this group",
 		`"files_inspected"`, `"comments"`, `"file"`, `"severity"`, `"claim"`, `"mechanism"`, `"fix"`, `"quote"`, `"quote_settles"`,
 		"ONE JSON object and nothing else",
-		"An empty `comments` list is the expected answer for most groups",
-		"inventing a finding is worse than returning none",
+		"An empty `comments` list is right only when the change has no logic that could break.",
 		`["src/a.ts","src/b.ts"]`,
 	} {
 		if !strings.Contains(user, want) {
