@@ -61,6 +61,22 @@ func Locate(quote, file string, patches map[string]string, head func(path string
 	return found, total == 1
 }
 
+// LocateAt finds a quote in content on lines that include line, trying every occurrence, since a cited
+// line such as a closing brace often repeats earlier in the file.
+func LocateAt(quote, content string, line int) (Location, bool) {
+	want := normalizeQuote(quote)
+	if len(want) == 0 {
+		return Location{}, false
+	}
+	code := numberLines(strings.Split(content, "\n"), 1)
+	for _, start := range matchStarts(want, code) {
+		if loc := span(want, code, start); loc.Start <= line && line <= loc.End {
+			return loc, true
+		}
+	}
+	return Location{}, false
+}
+
 func (l Location) on(file, side, method string) Location {
 	l.File, l.Side, l.Method = file, side, method
 	return l

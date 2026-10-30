@@ -15,7 +15,7 @@ type ReviewInput struct {
 }
 
 // Review renders a verified review: every finding by level, worst first, then the pre-existing
-// follow-ups, the coverage, every dropped or refuted comment and the run's notes. No finding is
+// follow-ups, the coverage, every unconfirmed, refuted or dropped comment and the run's notes. No finding is
 // capped; every model-written text and every error reason is redacted.
 func Review(in ReviewInput) []byte {
 	var b strings.Builder
@@ -25,10 +25,10 @@ func Review(in ReviewInput) []byte {
 	for _, f := range out.Findings {
 		levels[f.Finding.Level]++
 	}
-	fmt.Fprintf(&b, "%s: %d blocking, %d important, %s, %s · %d dropped · %d refuted · %s, $%.2f\n\n",
+	fmt.Fprintf(&b, "%s: %d blocking, %d important, %s, %s · %d dropped · %d refuted · %d unconfirmed · %s, $%.2f\n\n",
 		count(len(out.Findings), "finding", "findings"), levels[verify.LevelBlocking], levels[verify.LevelImportant],
 		count(levels[verify.LevelNote], "note", "notes"), count(levels[verify.LevelFollowUp], "follow-up", "follow-ups"),
-		len(out.Dropped), len(out.Refuted), count(out.Usage.Calls, "agent run", "agent runs"), out.Usage.CostUSD)
+		len(out.Dropped), len(out.Refuted), len(out.Unconfirmed), count(out.Usage.Calls, "agent run", "agent runs"), out.Usage.CostUSD)
 
 	if len(out.Findings) == 0 {
 		b.WriteString("No findings.\n\n")
@@ -81,7 +81,21 @@ func Review(in ReviewInput) []byte {
 		}
 	}
 
-	if len(out.Dropped)+len(out.Refuted) > 0 {
+	if len(out.Unconfirmed) > 0 {
+		b.WriteString("\n### Unconfirmed\n\n")
+	}
+	for _, u := range out.Unconfirmed {
+		f := u.Finding.Finding
+		fmt.Fprintf(&b, "- %s · `%s`: %s — %s\n", f.Level, span(f.Location), Redact(f.Comment.Claim), Redact(u.Reason))
+	}
+	if len(out.Refuted) > 0 {
+		b.WriteString("\n### Refuted\n\n")
+	}
+	for _, r := range out.Refuted {
+		f := r.Finding.Finding
+		fmt.Fprintf(&b, "- %s · `%s`: %s — evidence `%s`\n", f.Level, span(f.Location), Redact(f.Comment.Claim), at(r.Evidence[0].File, r.Evidence[0].Line))
+	}
+	if len(out.Dropped) > 0 {
 		b.WriteString("\n### Dropped\n\n")
 	}
 	for _, d := range out.Dropped {
@@ -90,10 +104,6 @@ func Review(in ReviewInput) []byte {
 			fmt.Fprintf(&b, " — %s", Redact(d.Comment.Claim))
 		}
 		b.WriteString("\n")
-	}
-	for _, r := range out.Refuted {
-		fmt.Fprintf(&b, "- refuted · `%s`: %s — citation `%s`\n",
-			span(r.Finding.Finding.Location), Redact(r.Finding.Finding.Comment.Claim), at(r.Citation.File, r.Citation.Line))
 	}
 	if len(out.Notes) > 0 {
 		b.WriteString("\n### Run notes\n\n")
@@ -146,6 +156,13 @@ func writeFinding(b *strings.Builder, n int, a review.Anchored) {
 	}
 	fmt.Fprintf(b, "**%d. %s** (%s)\n\nWhy it matters: %s\n\n%s\n%s\n%s\n\nFix: %s\n\n",
 		n, Redact(c.Claim), strings.Join(tags, " · "), Redact(c.Mechanism), fence, quote, fence, Redact(c.Fix))
+	if len(a.Evidence) > 0 {
+		locs := make([]string, len(a.Evidence))
+		for i, e := range a.Evidence {
+			locs[i] = "`" + at(e.File, e.Line) + "`"
+		}
+		fmt.Fprintf(b, "Evidence: %s\n\n", strings.Join(locs, ", "))
+	}
 }
 
 // span formats a location as file:start, or file:start-end when it covers several lines.

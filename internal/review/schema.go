@@ -14,11 +14,11 @@ const (
 
 	relocateSchema = `{"type":"object","properties":{"quote":{"type":"string"}},"required":["quote"],"additionalProperties":false}`
 
-	filterSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{` +
-		`"id":{"type":"integer"},"outcome":{"type":"string","enum":["corroborated","refuted","inconclusive"]},` +
-		`"citation":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"quote":{"type":"string"}},` +
-		`"required":["file","line","quote"],"additionalProperties":false}},` +
-		`"required":["id","outcome"],"additionalProperties":false}}},"required":["results"],"additionalProperties":false}`
+	investigateSchema = `{"type":"object","properties":{` +
+		`"verdict":{"type":"string","enum":["confirmed","refuted","unproven"]},"reasoning":{"type":"string"},` +
+		`"evidence":{"type":"array","items":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"quote":{"type":"string"}},` +
+		`"required":["file","line","quote"],"additionalProperties":false}}},` +
+		`"required":["verdict","reasoning","evidence"],"additionalProperties":false}`
 
 	claimsSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{` +
 		`"id":{"type":"integer"},"claim":{"type":"string"},` +

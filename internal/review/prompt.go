@@ -39,14 +39,14 @@ const taskSection = `# Task
 
 Review the change in the change block below and report the defects it introduces.
 
-Severity: severe only when the change causes it, realistic input reaches it, and it names an observable harm; otherwise at most a warning. Style or suspicion is not a finding.
+List every candidate defect this change could introduce: wrong logic, a missed case, a broken contract with code that calls or is called by the changed code, state or ordering bugs. Do not filter: Lupa investigates each candidate against the code afterwards, so a defect you leave out is lost while a wrong candidate costs little. When the change has logic, expect about 5 to 10 candidates per group. A defect can need another file to see; read callers and callees with your tools. Severity: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning. Style is not a candidate.
 
 Exclusions: do not report pre-existing issues, nitpicks, anything a linter catches, general quality or test coverage remarks, or anything in a file outside this group.
 
 Output: reply with ONE JSON object and nothing else:
 {"files_inspected": [<every path of this group>], "comments": [{"file": "<path>", "severity": "severe"|"warning", "claim": "<what is wrong>", "mechanism": "<how it breaks: input, path, condition>", "fix": "<one concrete change>", "quote": "<the exact code lines the claim is about, copied verbatim from the change including indentation; several consecutive lines allowed>", "quote_settles": true|false}]}
 Set quote_settles to true only when the quoted lines alone prove the claim.
-An empty ` + "`comments`" + ` list is the expected answer for most groups; inventing a finding is worse than returning none.
+An empty ` + "`comments`" + ` list is right only when the change has no logic that could break.
 `
 
 // BuildPrompt renders the reviewer prompt for one group. It is deterministic: the same input
@@ -93,8 +93,8 @@ func (d block) title() string {
 		return "# Comment whose quote was not found"
 	case "patch":
 		return "# Patch of the comment's file"
-	case "finding":
-		return "# Finding to check"
+	case "candidate":
+		return "# Candidate defect to investigate"
 	case "description":
 		return "# Sentences of the pull request description"
 	default:

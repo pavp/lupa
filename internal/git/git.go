@@ -220,6 +220,10 @@ func (r Repo) Reader(rev string) (*BlobReader, error) {
 
 // Read returns the content of path at the reader's revision. It is safe for concurrent use.
 func (b *BlobReader) Read(path string) ([]byte, error) {
+	// Paths can come from a model; a line break would turn one batch request into two and desync every later read.
+	if strings.ContainsAny(path, "\n\r\x00") {
+		return nil, fmt.Errorf("invalid path %q", path)
+	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if _, err := fmt.Fprintf(b.stdin, "%s:%s\n", b.rev, path); err != nil {
