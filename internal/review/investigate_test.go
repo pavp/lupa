@@ -69,9 +69,10 @@ func TestInvestigateDecidesEachVerdictByItsEvidence(t *testing.T) {
 		"no evidence":          `{"verdict": "confirmed", "reasoning": "obvious", "evidence": []}`,
 		"restated refutation":  `{"verdict": "refuted", "reasoning": "fine", "evidence": [{"file": "src/cart.ts", "line": 11, "quote": "` + realQuote + `"}]}`,
 		"cannot tell":          `{"verdict": "unproven", "reasoning": "needs runtime data", "evidence": []}`,
+		"repeated line":        `{"verdict": "confirmed", "reasoning": "closes total", "evidence": [{"file": "src/cart.ts", "line": 13, "quote": "}"}]}`,
 		"malformed":            `sure, it is a bug`,
 	})
-	names := []string{"qty may be undefined", "items may be null", "invented evidence", "no evidence", "restated refutation", "cannot tell", "malformed", "agent down"}
+	names := []string{"qty may be undefined", "repeated line", "items may be null", "invented evidence", "no evidence", "restated refutation", "cannot tell", "malformed", "agent down"}
 	var findings []Anchored
 	for _, n := range names {
 		findings = append(findings, candidate(n))
@@ -81,8 +82,8 @@ func TestInvestigateDecidesEachVerdictByItsEvidence(t *testing.T) {
 	if res.Calls != len(names) || fake.Calls() != len(names) {
 		t.Fatalf("calls = %d, agent calls = %d, want one per finding (%d)", res.Calls, fake.Calls(), len(names))
 	}
-	if len(res.Confirmed) != 1 || res.Confirmed[0].Finding.Finding.Comment.Claim != "qty may be undefined" {
-		t.Fatalf("confirmed = %+v, want only the finding with evidence found in the code", res.Confirmed)
+	if len(res.Confirmed) != 2 || res.Confirmed[0].Finding.Finding.Comment.Claim != "qty may be undefined" || res.Confirmed[1].Finding.Finding.Comment.Claim != "repeated line" {
+		t.Fatalf("confirmed = %+v, want the findings with evidence found at their lines, a repeated line included", res.Confirmed)
 	}
 	if ev := res.Confirmed[0].Evidence; len(ev) != 2 || ev[0].File != "src/item.ts" || ev[0].Line != 3 {
 		t.Errorf("evidence = %+v, want both located quotes in reply order", ev)
@@ -104,6 +105,9 @@ func TestInvestigateDecidesEachVerdictByItsEvidence(t *testing.T) {
 	}
 	if len(reasons) != len(want) {
 		t.Errorf("unconfirmed = %v, want %d findings", reasons, len(want))
+	}
+	if strings.Contains(reasons["restated refutation"], "not found") {
+		t.Errorf("reason %q says the flagged code was not found, though it was", reasons["restated refutation"])
 	}
 	for claim, part := range want {
 		if !strings.Contains(reasons[claim], part) {

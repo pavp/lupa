@@ -300,3 +300,20 @@ func TestLocateMisses(t *testing.T) {
 		})
 	}
 }
+
+func TestLocateAtFindsTheCitedOccurrence(t *testing.T) {
+	content := "func a() {\n\treturn nil\n}\n\nfunc b() {\n\treturn nil\n}\n"
+	for _, c := range []struct {
+		line       int
+		want       bool
+		start, end int
+	}{{2, true, 2, 2}, {6, true, 6, 6}, {3, false, 0, 0}} {
+		loc, ok := LocateAt("return nil", content, c.line)
+		if ok != c.want || (ok && (loc.Start != c.start || loc.End != c.end)) {
+			t.Errorf("LocateAt(line %d) = %+v, %v; want %v at %d-%d", c.line, loc, ok, c.want, c.start, c.end)
+		}
+	}
+	if _, ok := LocateAt("   ", content, 2); ok {
+		t.Error("a blank quote was located")
+	}
+}
