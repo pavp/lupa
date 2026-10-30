@@ -59,9 +59,13 @@ func (a Adapter) Run(ctx context.Context, req agent.Request) (agent.Response, er
 
 	// The tool allowlist is the isolation boundary: never add a permission-bypass mode,
 	// and never --bare, which fails on a subscription login.
+	tools := "Read,Grep,Glob"
+	if req.NoTools {
+		tools = ""
+	}
 	args := []string{
 		"-p", "--output-format", "json",
-		"--tools", "Read,Grep,Glob",
+		"--tools", tools,
 		"--setting-sources", "",
 		"--strict-mcp-config",
 		"--no-session-persistence",
