@@ -69,7 +69,9 @@ const investigateTask = `# Task
 
 Investigate the candidate defect in the candidate block below. The patch of its file follows it.
 
-Output: reply with ONE JSON object and nothing else:
+` + investigateOutput
+
+const investigateOutput = `Output: reply with ONE JSON object and nothing else:
 {"verdict": "confirmed"|"refuted"|"unproven", "reasoning": "<one sentence>", "blocks": "<for refuted: the mechanism step the evidence makes impossible; else empty>", "evidence": [{"file": "<repo path>", "line": <first line number>, "quote": "<the exact code, copied verbatim>"}]}
 `
 

@@ -59,6 +59,16 @@ An empty ` + "`comments`" + ` list is right only when the change has no logic th
 // BuildPrompt renders the reviewer prompt for one group. It is deterministic: the same input
 // always yields the same prompt.
 func BuildPrompt(in PromptInput) Prompt {
+	paths, _ := json.Marshal(in.Paths)
+	var b strings.Builder
+	b.WriteString(taskSection)
+	fmt.Fprintf(&b, "The paths of this group, for files_inspected: %s\n", paths)
+	b.WriteString(groupData(in))
+	return Prompt{System: systemPrompt, User: b.String()}
+}
+
+// groupData renders a group's data blocks: conventions, importer hints, changed symbols and the change.
+func groupData(in PromptInput) string {
 	var data []block
 	for _, c := range in.Conventions {
 		data = append(data, block{"convention", "Path: " + c.Path + "\n\n" + truncate(c.Content, conventionLimit)})
@@ -70,13 +80,9 @@ func BuildPrompt(in PromptInput) Prompt {
 		data = append(data, block{"symbols", truncate(calls, symbolLimit)})
 	}
 	data = append(data, block{"change", in.Patch})
-
-	paths, _ := json.Marshal(in.Paths)
 	var b strings.Builder
-	b.WriteString(taskSection)
-	fmt.Fprintf(&b, "The paths of this group, for files_inspected: %s\n", paths)
 	writeBlocks(&b, data)
-	return Prompt{System: systemPrompt, User: b.String()}
+	return b.String()
 }
 
 // writeBlocks appends each block under its title, fenced by one nonce that no block contains.
