@@ -239,3 +239,12 @@ func TestReviewShortensALongCitedLine(t *testing.T) {
 		t.Errorf("review does not shorten the cited line to 120 characters:\n%s", got)
 	}
 }
+
+func TestReviewAllUnderTheThreshold(t *testing.T) {
+	in := sampleReview()
+	in.Out.Findings = nil
+	got := string(Review(in))
+	if want := "No findings at or above the score threshold; 1 is listed under Low confidence.\n"; !strings.Contains(got, want) || strings.Contains(got, "No findings.\n") {
+		t.Errorf("review lacks %q:\n%s", want, got)
+	}
+}

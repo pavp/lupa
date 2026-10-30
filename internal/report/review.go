@@ -30,7 +30,10 @@ func Review(in ReviewInput) []byte {
 		count(levels[verify.LevelNote], "note", "notes"), count(levels[verify.LevelFollowUp], "follow-up", "follow-ups"),
 		len(out.Dropped), len(out.Low), count(out.Usage.Calls, "agent run", "agent runs"), out.Usage.CostUSD)
 
-	if len(out.Findings) == 0 {
+	switch {
+	case len(out.Findings) == 0 && len(out.Low) > 0:
+		fmt.Fprintf(&b, "No findings at or above the score threshold; %d %s listed under Low confidence.\n\n", len(out.Low), plural(len(out.Low), "is", "are"))
+	case len(out.Findings) == 0:
 		b.WriteString("No findings.\n\n")
 	}
 	n := 0
