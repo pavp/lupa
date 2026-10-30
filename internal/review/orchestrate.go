@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/verify"
@@ -64,7 +65,12 @@ func orchestrate(ctx context.Context, in RunInput, ag agent.Agent) []orchestrate
 		ps, _ := json.Marshal(paths)
 		fmt.Fprintf(&list, "- group %d: %s, paths for files_inspected: %s\n", g.ID, rel, ps)
 	}
-	req := agent.Request{Dir: in.Dir, SystemPrompt: orchestrateSystem, Timeout: in.Timeout, Schema: orchestrateSchema, Subagents: true,
+	timeout := in.Timeout
+	if timeout == 0 {
+		// One session runs every group's reviewer and every validator, so an adapter's per-run default would cut it short.
+		timeout = max(10*time.Minute, time.Duration(len(in.Plan.Groups))*3*time.Minute)
+	}
+	req := agent.Request{Dir: in.Dir, SystemPrompt: orchestrateSystem, Timeout: timeout, Schema: orchestrateSchema, Subagents: true,
 		Prompt: fmt.Sprintf(orchestrateTask, list.String(), taskSection, investigateSystem, investigateOutput)}
 	for attempt := 0; ; attempt++ {
 		resp, err := ag.Run(ctx, req)

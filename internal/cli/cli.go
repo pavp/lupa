@@ -372,6 +372,11 @@ func runReview(args []string, env Env) error {
 	conventions := conventionsOf(repo, signals.Base)
 	empty := review.BuildPrompt(review.PromptInput{Conventions: conventions})
 	plan := review.Plan(signals.Files, patches, review.Options{Overhead: len(empty.System) + len(empty.User)})
+	// Claude Code can run subagents, so one session reviews and validates every group; Pi keeps one run per step.
+	orchestrate := agentName == "claude"
+	if orchestrate && len(plan.Groups) > 0 {
+		plan.Estimate.Runs = 1
+	}
 	sentences, claimPatches := uncheckedClaims(signals, patches)
 	if len(sentences) > 0 {
 		plan.Estimate.Runs += review.ClaimRuns(claimPatches)
@@ -419,7 +424,7 @@ func runReview(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag,
+	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag, Orchestrate: orchestrate,
 		Sentences: sentences, ClaimPatches: claimPatches})
 	if err != nil {
 		return err
