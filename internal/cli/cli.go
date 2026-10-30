@@ -27,6 +27,7 @@ import (
 	"github.com/pavp/lupa/internal/report"
 	"github.com/pavp/lupa/internal/review"
 	"github.com/pavp/lupa/internal/store"
+	"github.com/pavp/lupa/internal/verify"
 )
 
 const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
@@ -413,7 +414,11 @@ func runReview(args []string, env Env) error {
 			importers[f.Path] = f.Importers
 		}
 	}
-	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Conventions: conventions, Agent: ag,
+	symbols, err := symbolsOf(repo, signals.Head, patches)
+	if err != nil {
+		return err
+	}
+	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag,
 		Sentences: sentences, ClaimPatches: claimPatches})
 	if err != nil {
 		return err
@@ -605,6 +610,47 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 		if inChange[u.From] {
 			out.Unresolved = append(out.Unresolved, mapping.Unresolved{From: u.From, Specifier: u.Specifier, Line: u.Line})
 		}
+	}
+	return out, nil
+}
+
+// symbolsOf finds, at head, the TS/JS declarations the patches add lines to, with their callers and callees,
+// by path. It reads nothing when no patch adds a line to a TS/JS file.
+func symbolsOf(repo git.Repo, head string, patches map[string]string) (map[string][]reach.Symbol, error) {
+	provider := typescript.Provider{}
+	added := map[string][]int{}
+	for path, patch := range patches {
+		if lines := verify.AddedLines(patch); provider.Owns(path) && len(lines) > 0 {
+			added[path] = lines
+		}
+	}
+	if len(added) == 0 {
+		return nil, nil
+	}
+	all, err := repo.Files(head)
+	if err != nil {
+		return nil, err
+	}
+	blobs, err := repo.Reader(head)
+	if err != nil {
+		return nil, err
+	}
+	defer blobs.Close()
+	g, err := reach.Build(all, blobs.Read, provider)
+	if err != nil {
+		return nil, fmt.Errorf("symbols: %w", err)
+	}
+	resolver, err := provider.NewResolver(all, blobs.Read)
+	if err != nil {
+		return nil, fmt.Errorf("symbols: %w", err)
+	}
+	syms, err := reach.ChangedSymbols(reach.SymbolInput{Graph: g, Added: added, ReadFile: blobs.Read, Symbols: provider, Resolver: resolver})
+	if err != nil {
+		return nil, fmt.Errorf("symbols: %w", err)
+	}
+	out := map[string][]reach.Symbol{}
+	for _, sym := range syms {
+		out[sym.File] = append(out[sym.File], sym)
 	}
 	return out, nil
 }
