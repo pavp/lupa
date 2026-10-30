@@ -278,3 +278,20 @@ func TestDiffsFollowRenames(t *testing.T) {
 		t.Errorf("first changed lines = %v, want new dir/a.go at 7 and ñandú.go at 2", first)
 	}
 }
+
+func TestBlobReaderRejectsAPathThatWouldSplitTheRequest(t *testing.T) {
+	repo, _ := worktreeRepo(t)
+	r, err := Repo{Dir: repo}.Reader("HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	for _, bad := range []string{"a.txt\nHEAD:a.txt", "a.txt\rx", "a\x00.txt"} {
+		if _, err := r.Read(bad); err == nil {
+			t.Errorf("Read(%q) succeeded, want an error", bad)
+		}
+	}
+	if got, err := r.Read("a.txt"); err != nil || string(got) != "v2\n" {
+		t.Errorf("Read(a.txt) after bad paths = %q, %v; want the head content", got, err)
+	}
+}

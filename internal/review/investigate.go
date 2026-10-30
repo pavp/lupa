@@ -128,26 +128,32 @@ func investigateOne(ctx context.Context, in InvestigateInput, a Anchored) (strin
 	}
 	flagged := a.Finding.Location
 	var found []Evidence
-	var missing []string
+	var missing, self []string
 	for _, e := range reply.Evidence {
 		switch loc, ok := locateEvidence(e, in.Head); {
 		case !ok:
 			missing = append(missing, fmt.Sprintf("%s:%d", e.File, e.Line))
 		case reply.Verdict == VerdictRefuted && flagged.Side == "new" && e.File == flagged.File && loc.Start <= flagged.End && loc.End >= flagged.Start:
-			missing = append(missing, fmt.Sprintf("%s:%d is the flagged code itself", e.File, e.Line))
+			self = append(self, fmt.Sprintf("%s:%d", e.File, e.Line))
 		default:
 			found = append(found, e)
 		}
 	}
 	switch reply.Verdict {
 	case VerdictConfirmed, VerdictRefuted:
-		if len(found) > 0 {
+		var why []string
+		switch {
+		case len(found) > 0:
 			return reply.Verdict, found, ""
-		}
-		if len(missing) == 0 {
+		case len(missing) == 0 && len(self) == 0:
 			return VerdictUnproven, nil, reply.Verdict + " with no evidence"
+		case len(missing) > 0:
+			why = append(why, "evidence not found in the code: "+strings.Join(missing, ", "))
 		}
-		return VerdictUnproven, nil, reply.Verdict + " but its evidence was not found in the code: " + strings.Join(missing, ", ")
+		if len(self) > 0 {
+			why = append(why, "evidence cites only the flagged code itself: "+strings.Join(self, ", "))
+		}
+		return VerdictUnproven, nil, reply.Verdict + " but " + strings.Join(why, "; ")
 	case VerdictUnproven:
 		return VerdictUnproven, nil, "unproven: " + reply.Reasoning
 	}
@@ -156,14 +162,11 @@ func investigateOne(ctx context.Context, in InvestigateInput, a Anchored) (strin
 
 // locateEvidence finds an evidence quote in its file at the head on lines that include its cited line.
 func locateEvidence(e Evidence, head func(string) (string, bool)) (verify.Location, bool) {
-	if _, ok := head(e.File); !ok || strings.TrimSpace(e.Quote) == "" {
+	content, ok := head(e.File)
+	if !ok {
 		return verify.Location{}, false
 	}
-	loc, ok := verify.Locate(e.Quote, e.File, nil, head)
-	if !ok || e.Line < loc.Start || e.Line > loc.End {
-		return verify.Location{}, false
-	}
-	return loc, true
+	return verify.LocateAt(e.Quote, content, e.Line)
 }
 
 func investigatePrompt(a Anchored, patches map[string]string) string {
