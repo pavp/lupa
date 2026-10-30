@@ -29,7 +29,13 @@ type RunInput struct {
 	// Sentences of the PR description to check against ClaimPatches, the patches of the files a claim may cite.
 	Sentences    []string
 	ClaimPatches map[string]string
+	// Threshold is the lowest score a finding needs to stay; ScoreModel is the scorer's model, empty for the agent's default.
+	Threshold  int
+	ScoreModel string
 }
+
+// DefaultThreshold is the score a finding needs by default: the best balance measured between noise and findings kept.
+const DefaultThreshold = 7
 
 // DefaultParallel is how many reviewer runs go at once when RunInput.Parallel is zero.
 const DefaultParallel = 4
@@ -57,13 +63,13 @@ type Usage struct {
 	OutputTokens int
 }
 
-// RunOutput is the verified review: the findings that stay, the refuted ones, the dropped comments,
-// the plan's coverage ledger updated by the run, the usage, the filter's and claim check's notes, and
+// RunOutput is the verified review: the findings that stay, the ones scored under the threshold, the dropped
+// comments, the plan's coverage ledger updated by the run, the usage, the scorer's and claim check's notes, and
 // the description's claims as checked, nil when there was no sentence to check.
 type RunOutput struct {
 	Claims   []ClaimCheck
 	Findings []Anchored
-	Refuted  []RefutedFinding
+	Low      []ScoredFinding
 	Dropped  []Drop
 	Ledger   []Entry
 	Usage    Usage
@@ -73,7 +79,7 @@ type RunOutput struct {
 const reasonUninspected = "the reviewer did not report inspecting it"
 
 // Run reviews the planned groups, up to Parallel at a time, verifies and anchors their comments,
-// then dedupes the findings of every group and filters them in one refuter run. Results are merged
+// then dedupes the findings of every group and scores them in one tool-free run. Results are merged
 // in group order, whatever order the runs finish in. An unusable answer gets one retry; a failed
 // group marks its files not reviewed and the other groups still run.
 func Run(ctx context.Context, in RunInput) RunOutput {
@@ -123,12 +129,13 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			f.Level = verify.Level(f.Comment, f.Causality)
 		}
 	}
-	filtered := Filter(ctx, FilterInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: merged, Head: in.Head})
-	out.Findings, out.Refuted = filtered.Kept, filtered.Refuted
-	if filtered.Note != "" {
-		out.Notes = append(out.Notes, filtered.Note)
+	scored := Score(ctx, ScoreInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Model: in.ScoreModel, Threshold: in.Threshold,
+		Findings: merged, Patches: in.Patches})
+	out.Findings, out.Low = scored.Kept, scored.Low
+	if scored.Note != "" {
+		out.Notes = append(out.Notes, scored.Note)
 	}
-	out.Notes = append(out.Notes, filtered.Notes...)
+	out.Notes = append(out.Notes, scored.Notes...)
 	out.Claims = claims.Checks
 	out.Notes = append(out.Notes, claims.Notes...)
 	return out

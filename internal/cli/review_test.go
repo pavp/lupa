@@ -121,6 +121,8 @@ func TestReviewErrors(t *testing.T) {
 		{"agent without a name", []string{"review", "feature", "--yes", "--agent"}, "flag \"--agent\" needs a value"},
 		{"unknown flag", []string{"review", "feature", "--plan", "--bogus"}, "unknown flag \"--bogus\""},
 		{"missing target", []string{"review", "--plan"}, "missing target"},
+		{"threshold over 10", []string{"review", "feature", "--yes", "--threshold", "11"}, "--threshold must be a whole number from 0 to 10"},
+		{"threshold not a number", []string{"review", "feature", "--yes", "--threshold", "high"}, "--threshold must be a whole number from 0 to 10"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -154,16 +156,16 @@ func newRunRepo(t *testing.T) (dir, base, head string) {
 
 var groupPaths = regexp.MustCompile(`The paths of this group, for files_inspected: (\[.*\])`)
 
-// fakeAgent answers every reviewer run with one severe comment on `var B = 1` and the refuter
-// with corroborated, and records each request.
+// fakeAgent answers every reviewer run with one severe comment on `var B = 1` and the scorer with 8,
+// and records each request.
 func fakeAgent(t *testing.T, reqs *[]agent.Request) *agent.Fake {
 	var mu sync.Mutex
 	return &agent.Fake{Reply: func(req agent.Request) (string, error) {
 		mu.Lock()
 		*reqs = append(*reqs, req)
 		mu.Unlock()
-		if strings.Contains(req.Prompt, "Try to disprove") {
-			return `{"results": [{"id": 0, "outcome": "corroborated"}]}`, nil
+		if req.NoTools {
+			return `{"results": [{"id": 0, "score": 8, "reason": "any importer can reassign B"}]}`, nil
 		}
 		m := groupPaths.FindStringSubmatch(req.Prompt)
 		if m == nil {
@@ -195,7 +197,11 @@ type reviewOut struct {
 		Claim     string `json:"claim"`
 		Quote     string `json:"quote"`
 	} `json:"findings"`
-	Refuted []json.RawMessage `json:"refuted"`
+	Low []struct {
+		Finding struct{ Claim string } `json:"finding"`
+		Score   int                    `json:"score"`
+		Reason  string                 `json:"reason"`
+	} `json:"low_confidence"`
 	Dropped []json.RawMessage `json:"dropped"`
 	Ledger  []json.RawMessage `json:"ledger"`
 	Usage   struct {
@@ -226,8 +232,8 @@ func TestReviewRunJSON(t *testing.T) {
 	if f.File != "b.go" || f.Side != "new" || f.Start != 3 || f.End != 3 || f.Level != "important" || f.Quote != "var B = 1" {
 		t.Errorf("finding = %+v, want b.go new 3-3 important", f)
 	}
-	if r.Refuted == nil || r.Dropped == nil || len(r.Ledger) == 0 || r.Usage.Calls != len(reqs) || len(reqs) != 2 {
-		t.Errorf("refuted %v, dropped %v, ledger %d, usage %d, requests %d", r.Refuted, r.Dropped, len(r.Ledger), r.Usage.Calls, len(reqs))
+	if r.Low == nil || r.Dropped == nil || len(r.Ledger) == 0 || r.Usage.Calls != len(reqs) || len(reqs) != 2 {
+		t.Errorf("low confidence %v, dropped %v, ledger %d, usage %d, requests %d", r.Low, r.Dropped, len(r.Ledger), r.Usage.Calls, len(reqs))
 	}
 
 	saved, err := os.ReadFile(filepath.Join(dir, ".git", "lupa", "feature", head[:7], "review.json"))
@@ -292,7 +298,7 @@ func TestReviewRunAsks(t *testing.T) {
 				}
 				return
 			}
-			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 2 agent runs, $0.00\n"; len(reqs) != 2 || !strings.Contains(stdout, want) {
+			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 low confidence · 2 agent runs, $0.00\n"; len(reqs) != 2 || !strings.Contains(stdout, want) {
 				t.Errorf("agent calls %d, want summary %q in:\n%s", len(reqs), want, stdout)
 			}
 		})
@@ -339,17 +345,17 @@ func TestReviewJSONRedacts(t *testing.T) {
 	a := review.Anchored{Finding: verify.Finding{Comment: c, Location: verify.Location{File: "a.go", Start: 1, End: 1}}}
 	out := review.RunOutput{
 		Findings: []review.Anchored{a},
-		Refuted:  []review.RefutedFinding{{Finding: a, Citation: review.Citation{File: "a.go", Line: 2, Quote: "key " + secret}}},
+		Low:      []review.ScoredFinding{{Finding: a, Score: 2, Reason: "key " + secret}},
 		Dropped:  []review.Drop{{Stage: review.StageAnchor, Comment: c, Reason: "relocation failed: " + secret}},
 		Ledger:   []review.Entry{{Path: "b.go", Status: review.NotReviewed, Reason: "agent run failed: " + secret}},
-		Notes:    []string{"filter run failed: " + secret},
+		Notes:    []string{"scorer run failed: " + secret},
 	}
 	b, err := json.Marshal(reviewJSONOf("b", "h", out))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if s := string(b); strings.Contains(s, "ghp_aaa") || strings.Contains(s, "hunter2") || !strings.Contains(s, `password = \"‹redacted›\"`) ||
-		!strings.Contains(s, `"notes":["filter run failed: ‹redacted›"]`) {
+		!strings.Contains(s, `"notes":["scorer run failed: ‹redacted›"]`) || !strings.Contains(s, `"reason":"key ‹redacted›"`) {
 		t.Errorf("JSON not redacted: %s", s)
 	}
 }
@@ -365,5 +371,30 @@ func TestReviewRunExitsOneWhenNoGroupIsReviewed(t *testing.T) {
 	var got reviewOut
 	if err := json.Unmarshal([]byte(stdout), &got); err != nil || !strings.Contains(stdout, `"status": "not-reviewed"`) {
 		t.Errorf("stdout is not the saved review with not-reviewed entries: %v\n%s", err, stdout)
+	}
+}
+
+func TestReviewScorerFlags(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	dir, _, _ := newRunRepo(t)
+	var reqs []agent.Request
+	code, stdout, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json", "--threshold", "9", "--scorer-model", "a-cheaper-model")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	var r reviewOut
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Findings) != 0 || len(r.Low) != 1 || r.Low[0].Score != 8 || r.Low[0].Reason == "" || r.Low[0].Finding.Claim != "B is exported mutable state" {
+		t.Errorf("findings %+v, low %+v; want the finding scored 8 moved under threshold 9", r.Findings, r.Low)
+	}
+	for _, q := range reqs {
+		if q.NoTools && q.Model != "a-cheaper-model" {
+			t.Errorf("scorer model = %q, want the flag's", q.Model)
+		}
+		if !q.NoTools && q.Model != "" {
+			t.Errorf("reviewer model = %q, want the agent's default", q.Model)
+		}
 	}
 }

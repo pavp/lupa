@@ -39,14 +39,14 @@ const taskSection = `# Task
 
 Review the change in the change block below and report the defects it introduces.
 
-Severity: severe only when the change causes it, realistic input reaches it, and it names an observable harm; otherwise at most a warning. Style or suspicion is not a finding.
+Severity: severe only when the change causes it, realistic input reaches it, and it names an observable harm; otherwise at most a warning. Report a plausible defect as a warning rather than leaving it out; style is not a finding.
 
 Exclusions: do not report pre-existing issues, nitpicks, anything a linter catches, general quality or test coverage remarks, or anything in a file outside this group.
 
 Output: reply with ONE JSON object and nothing else:
 {"files_inspected": [<every path of this group>], "comments": [{"file": "<path>", "severity": "severe"|"warning", "claim": "<what is wrong>", "mechanism": "<how it breaks: input, path, condition>", "fix": "<one concrete change>", "quote": "<the exact code lines the claim is about, copied verbatim from the change including indentation; several consecutive lines allowed>", "quote_settles": true|false}]}
 Set quote_settles to true only when the quoted lines alone prove the claim.
-An empty ` + "`comments`" + ` list is the expected answer for most groups; inventing a finding is worse than returning none.
+Report every plausible defect this change introduces: Lupa checks each comment against the code and drops what it cannot confirm, so a missed defect costs more than a comment that turns out wrong. An empty ` + "`comments`" + ` list is right only when you found nothing plausible.
 `
 
 // BuildPrompt renders the reviewer prompt for one group. It is deterministic: the same input
