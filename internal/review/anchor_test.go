@@ -219,3 +219,19 @@ func TestAnchorKeepsInputOrder(t *testing.T) {
 		t.Errorf("calls = %d, RelocationCalls = %d, want 2 and 2", fake.Calls(), res.RelocationCalls)
 	}
 }
+
+func TestAnchorFollowsARenamedFilesOldPath(t *testing.T) {
+	fake := replying(`{"quote": ""}`)
+	in := anchorInput(fake, cartComment("price ignores qty", "  for (const i of items) sum += i.price;"))
+	in.Comments[0].File = "src/old/cart.ts"
+	in.Patches = map[string]string{"src/cart.ts": strings.Replace(cartPatch, "diff --git a/src/cart.ts b/src/cart.ts\n",
+		"diff --git a/src/old/cart.ts b/src/cart.ts\nsimilarity index 90%\nrename from src/old/cart.ts\nrename to src/cart.ts\n", 1)}
+	res := Anchor(context.Background(), in)
+
+	if fake.Calls() != 0 || len(res.Findings) != 1 {
+		t.Fatalf("calls = %d, findings = %d, dropped = %v; want a direct hit", fake.Calls(), len(res.Findings), res.Dropped)
+	}
+	if loc := res.Findings[0].Finding.Location; loc.File != "src/cart.ts" || loc.Side != "old" || loc.Start != 11 {
+		t.Errorf("location = %+v, want src/cart.ts old 11", loc)
+	}
+}

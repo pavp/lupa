@@ -7,7 +7,8 @@
 | `schema` | string | `lupa.signals/v0` |
 | `base`, `head` | string | Full commit hashes. `base` is the merge-base of the target, the diff a PR would show. |
 | `files[]` | array | One entry per changed file, in `git diff` order. |
-| `files[].path` | string | Repo-relative path. Renames appear as a deletion plus an addition. |
+| `files[].path` | string | Repo-relative path; the new path of a renamed file. |
+| `files[].old_path` | string, optional | The path before a rename, at git's default similarity; absent otherwise. |
 | `files[].additions`, `files[].deletions` | number | Line counts; `0` for binary files. |
 | `files[].binary` | bool, optional | `true` for binary files. |
 | `files[].first_line` | number, optional | First changed line on the head side; absent for a deleted file. |
