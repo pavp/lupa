@@ -15,8 +15,8 @@ type ReviewInput struct {
 }
 
 // Review renders a verified review: every finding by level, worst first, then the pre-existing
-// follow-ups, the coverage, every dropped or refuted comment and the run's notes. No finding is
-// capped; every model-written text and every error reason is redacted.
+// follow-ups, the coverage, every dropped comment, the findings scored under the threshold and the run's
+// notes. No finding is capped; every model-written text and every error reason is redacted.
 func Review(in ReviewInput) []byte {
 	var b strings.Builder
 	out := in.Out
@@ -25,10 +25,10 @@ func Review(in ReviewInput) []byte {
 	for _, f := range out.Findings {
 		levels[f.Finding.Level]++
 	}
-	fmt.Fprintf(&b, "%s: %d blocking, %d important, %s, %s · %d dropped · %d refuted · %s, $%.2f\n\n",
+	fmt.Fprintf(&b, "%s: %d blocking, %d important, %s, %s · %d dropped · %d low confidence · %s, $%.2f\n\n",
 		count(len(out.Findings), "finding", "findings"), levels[verify.LevelBlocking], levels[verify.LevelImportant],
 		count(levels[verify.LevelNote], "note", "notes"), count(levels[verify.LevelFollowUp], "follow-up", "follow-ups"),
-		len(out.Dropped), len(out.Refuted), count(out.Usage.Calls, "agent run", "agent runs"), out.Usage.CostUSD)
+		len(out.Dropped), len(out.Low), count(out.Usage.Calls, "agent run", "agent runs"), out.Usage.CostUSD)
 
 	if len(out.Findings) == 0 {
 		b.WriteString("No findings.\n\n")
@@ -81,7 +81,7 @@ func Review(in ReviewInput) []byte {
 		}
 	}
 
-	if len(out.Dropped)+len(out.Refuted) > 0 {
+	if len(out.Dropped) > 0 {
 		b.WriteString("\n### Dropped\n\n")
 	}
 	for _, d := range out.Dropped {
@@ -91,9 +91,13 @@ func Review(in ReviewInput) []byte {
 		}
 		b.WriteString("\n")
 	}
-	for _, r := range out.Refuted {
-		fmt.Fprintf(&b, "- refuted · `%s`: %s — citation `%s`\n",
-			span(r.Finding.Finding.Location), Redact(r.Finding.Finding.Comment.Claim), at(r.Citation.File, r.Citation.Line))
+	// Under the threshold is not proof of wrong, so these stay listed, with the score and the scorer's reason.
+	if len(out.Low) > 0 {
+		b.WriteString("\n### Low confidence\n\n")
+	}
+	for _, l := range out.Low {
+		fmt.Fprintf(&b, "- `%s` · score %d: %s — %s\n",
+			span(l.Finding.Finding.Location), l.Score, Redact(l.Finding.Finding.Comment.Claim), Redact(l.Reason))
 	}
 	if len(out.Notes) > 0 {
 		b.WriteString("\n### Run notes\n\n")

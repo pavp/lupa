@@ -46,12 +46,12 @@ func TestBuildPromptUserContent(t *testing.T) {
 	user := BuildPrompt(promptInput()).User
 	for _, want := range []string{
 		"severe only when the change causes it, realistic input reaches it, and it names an observable harm; otherwise at most a warning.",
-		"Style or suspicion is not a finding.",
+		"Report a plausible defect as a warning rather than leaving it out; style is not a finding.",
 		"pre-existing issues", "nitpicks", "anything a linter catches", "general quality or test coverage remarks", "outside this group",
 		`"files_inspected"`, `"comments"`, `"file"`, `"severity"`, `"claim"`, `"mechanism"`, `"fix"`, `"quote"`, `"quote_settles"`,
 		"ONE JSON object and nothing else",
-		"An empty `comments` list is the expected answer for most groups",
-		"inventing a finding is worse than returning none",
+		"Report every plausible defect this change introduces",
+		"An empty `comments` list is right only when you found nothing plausible.",
 		`["src/a.ts","src/b.ts"]`,
 	} {
 		if !strings.Contains(user, want) {

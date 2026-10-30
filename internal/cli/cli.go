@@ -28,7 +28,7 @@ import (
 	"github.com/pavp/lupa/internal/store"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]\n                   [--threshold 0-10] [--scorer-model <model>]\n<pr> is a pull request number (482, #482) or URL, read through gh\n--threshold is the lowest score (default 7) a finding needs to stay; the rest are listed as low confidence\n--scorer-model is the agent's model for scoring findings; default is the agent's own"
 
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.
@@ -203,7 +203,7 @@ type reviewJSON struct {
 	Base     string         `json:"base"`
 	Head     string         `json:"head"`
 	Findings []findingJSON  `json:"findings"`
-	Refuted  []refutedJSON  `json:"refuted"`
+	Low      []lowJSON      `json:"low_confidence"`
 	Dropped  []droppedJSON  `json:"dropped"`
 	Ledger   []review.Entry `json:"ledger"`
 	Usage    usageJSON      `json:"usage"`
@@ -237,9 +237,10 @@ type findingJSON struct {
 	Merged    int    `json:"merged"`
 }
 
-type refutedJSON struct {
-	Finding  findingJSON     `json:"finding"`
-	Citation review.Citation `json:"citation"`
+type lowJSON struct {
+	Finding findingJSON `json:"finding"`
+	Score   int         `json:"score"`
+	Reason  string      `json:"reason"`
 }
 
 type droppedJSON struct {
@@ -259,7 +260,7 @@ type usageJSON struct {
 }
 
 func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
-	r := reviewJSON{Schema: "lupa.review/v0", Base: base, Head: head, Findings: []findingJSON{}, Refuted: []refutedJSON{},
+	r := reviewJSON{Schema: "lupa.review/v0", Base: base, Head: head, Findings: []findingJSON{}, Low: []lowJSON{},
 		Dropped: []droppedJSON{}, Ledger: []review.Entry{}, Usage: usageJSON(out.Usage), Notes: []string{}}
 	for _, e := range out.Ledger {
 		e.Reason = report.Redact(e.Reason)
@@ -275,10 +276,8 @@ func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 		r.Claims = append(r.Claims, claimJSON{Sentence: report.Redact(c.Sentence), Claim: report.Redact(c.Claim), Outcome: c.Outcome,
 			File: c.File, Side: c.Side, Line: c.Line, Code: report.Redact(c.Code)})
 	}
-	for _, f := range out.Refuted {
-		citation := f.Citation
-		citation.Quote = report.Redact(citation.Quote)
-		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Citation: citation})
+	for _, l := range out.Low {
+		r.Low = append(r.Low, lowJSON{Finding: findingJSONOf(l.Finding), Score: l.Score, Reason: report.Redact(l.Reason)})
 	}
 	for _, d := range out.Dropped {
 		r.Dropped = append(r.Dropped, droppedJSON{Stage: d.Stage, Group: d.Group, Reason: report.Redact(d.Reason), File: d.Comment.File,
@@ -296,9 +295,15 @@ func findingJSONOf(a review.Anchored) findingJSON {
 
 func runReview(args []string, env Env) error {
 	asJSON, planOnly, yes, agentName := false, false, false, "claude"
-	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes}, map[string]*string{"--agent": &agentName})
+	threshold, scorerModel := strconv.Itoa(review.DefaultThreshold), ""
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes},
+		map[string]*string{"--agent": &agentName, "--threshold": &threshold, "--scorer-model": &scorerModel})
 	if err != nil {
 		return err
+	}
+	minScore, err := strconv.Atoi(threshold)
+	if err != nil || minScore < 0 || minScore > 10 {
+		return usageError{"--threshold must be a whole number from 0 to 10"}
 	}
 	if agentName != "claude" {
 		return usageError{fmt.Sprintf("unknown agent %q", agentName)}
@@ -358,7 +363,7 @@ func runReview(args []string, env Env) error {
 		}
 	}
 	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Conventions: conventions, Agent: ag,
-		Sentences: sentences, ClaimPatches: claimPatches})
+		Sentences: sentences, ClaimPatches: claimPatches, Threshold: minScore, ScoreModel: scorerModel})
 	if err != nil {
 		return err
 	}
