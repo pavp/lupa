@@ -29,6 +29,7 @@ func scoreInput(reply string, err error, reqs *[]agent.Request) ScoreInput {
 		Dir:       "/tmp/worktree",
 		Model:     "a-cheaper-model",
 		Threshold: 7,
+		Budget:    DefaultBudget,
 		Findings:  []Anchored{scored("src/cart.ts", "total is NaN for an empty cart", 1), scored("src/cart.ts", "add a docstring", 1)},
 		Patches:   map[string]string{"src/cart.ts": scoreCartPatch, "src/other.ts": "diff --git a/src/other.ts b/src/other.ts\n"},
 	}
@@ -55,8 +56,19 @@ func TestScoreSplitsFindingsAtTheThreshold(t *testing.T) {
 			t.Errorf("prompt lacks %q", want)
 		}
 	}
-	if strings.Contains(r.Prompt, "src/other.ts") {
-		t.Errorf("prompt carries the patch of a file no finding is about")
+	if !strings.Contains(r.Prompt, "src/other.ts") {
+		t.Errorf("prompt lacks the patch of a file no finding is about, though the change fits the budget")
+	}
+}
+
+func TestScoreOverTheBudgetSendsOnlyTheFindingsFiles(t *testing.T) {
+	var reqs []agent.Request
+	in := scoreInput(`{"results":[]}`, nil, &reqs)
+	in.Budget = len(scoreCartPatch) + 10
+	in.Patches["src/other.ts"] = "diff --git a/src/other.ts b/src/other.ts\n" + strings.Repeat("+x\n", 100)
+	Score(context.Background(), in)
+	if len(reqs) != 1 || !strings.Contains(reqs[0].Prompt, "+total = sum(items)") || strings.Contains(reqs[0].Prompt, "src/other.ts") {
+		t.Errorf("over the budget the prompt must carry only the patches of the findings' files")
 	}
 }
 

@@ -12,13 +12,15 @@ import (
 )
 
 // ScoreInput is what the scorer run needs: the agent, its optional model and run settings, the findings that passed
-// the code checks, the change's patches by path, and the lowest score a finding needs to stay.
+// the code checks, the change's reviewable patches by path, the byte budget for them, and the lowest score a finding
+// needs to stay.
 type ScoreInput struct {
 	Agent     agent.Agent
 	Dir       string
 	Timeout   time.Duration
 	Model     string
 	Threshold int
+	Budget    int
 	Findings  []Anchored
 	Patches   map[string]string
 }
@@ -60,7 +62,7 @@ Output: reply with ONE JSON object and nothing else, with one result per finding
 {"results": [{"id": <the finding's id>, "score": <0-10>, "reason": "<one short sentence>"}]}
 `
 
-// Score sends every finding and the patches of their files to one tool-free run and keeps those scoring at least the
+// Score sends every finding and the change's patches to one tool-free run and keeps those scoring at least the
 // threshold. A finding with no valid score stays; a failed run or a malformed reply keeps them all, so the scorer can
 // only remove what it scored low.
 func Score(ctx context.Context, in ScoreInput) ScoreResult {
@@ -69,7 +71,7 @@ func Score(ctx context.Context, in ScoreInput) ScoreResult {
 		return res
 	}
 	res.Calls++
-	resp, err := in.Agent.Run(ctx, agent.Request{Dir: in.Dir, SystemPrompt: scoreSystem, Prompt: scorePrompt(in.Findings, in.Patches),
+	resp, err := in.Agent.Run(ctx, agent.Request{Dir: in.Dir, SystemPrompt: scoreSystem, Prompt: scorePrompt(in.Findings, in.Patches, in.Budget),
 		Timeout: in.Timeout, Model: in.Model, Schema: scoreSchema, NoTools: true})
 	var results []scoreResult
 	if err != nil {
@@ -118,8 +120,10 @@ type scoreResult struct {
 	Reason string `json:"reason"`
 }
 
-// scorePrompt carries each finding and the patches of the files the findings are about, in path order.
-func scorePrompt(findings []Anchored, patches map[string]string) string {
+// scorePrompt carries each finding and, in path order, every patch of the change when they fit the budget, else the
+// patches of the files the findings are about. Seeing the whole change, the scorer kept more true findings at the
+// same precision than when it saw only the findings' files.
+func scorePrompt(findings []Anchored, patches map[string]string, budget int) string {
 	var data []block
 	var files []string
 	for i, a := range findings {
@@ -128,6 +132,16 @@ func scorePrompt(findings []Anchored, patches map[string]string) string {
 			i, f.Location.File, f.Location.Start, f.Location.End, f.Comment.Claim, f.Comment.Mechanism, f.Comment.Quote)})
 		if !slices.Contains(files, f.Location.File) {
 			files = append(files, f.Location.File)
+		}
+	}
+	total := 0
+	for _, p := range patches {
+		total += len(p)
+	}
+	if total <= budget {
+		files = files[:0]
+		for p := range patches {
+			files = append(files, p)
 		}
 	}
 	slices.Sort(files)

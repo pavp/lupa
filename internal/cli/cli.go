@@ -28,7 +28,7 @@ import (
 	"github.com/pavp/lupa/internal/store"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]\n                   [--threshold 0-10] [--scorer-model <model>]\n<pr> is a pull request number (482, #482) or URL, read through gh\n--threshold is the lowest score (default 7) a finding needs to stay; the rest are listed as low confidence\n--scorer-model is the agent's model for scoring findings; default is the agent's own"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]\n                   [--threshold 0-10] [--scorer-model <model>]\n<pr> is a pull request number (482, #482) or URL, read through gh\n--threshold is the lowest score (default 6) a finding needs to stay; the rest are listed as low confidence\n--scorer-model is the agent's model for scoring findings; default is the agent's own"
 
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.

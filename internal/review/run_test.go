@@ -480,3 +480,23 @@ func TestRunChecksTheDescriptionAlongsideTheGroups(t *testing.T) {
 		t.Errorf("claims = %+v without sentences, want no claim run", out.Claims)
 	}
 }
+
+func TestRunLeavesPreExistingFollowUpsUnscored(t *testing.T) {
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "severe", "rate is imported from a module with no default", "import { rate } from \"./rate\";", false)), nil
+			}
+			return answer([]string{"src/cart.ts"}), nil
+		},
+		score: `{"results": [{"id": 0, "score": 0, "reason": "the change does not touch this code"}]}`,
+	}
+	out := Run(context.Background(), f.input(runPlan(Options{})))
+
+	if len(out.Findings) != 1 || out.Findings[0].Finding.Level != verify.LevelFollowUp {
+		t.Fatalf("findings = %+v, want the pre-existing follow-up kept", out.Findings)
+	}
+	if len(out.Low) != 0 || f.count(scoreSystem) != 0 {
+		t.Errorf("low = %+v, scorer calls = %d; want a follow-up never scored: its rubric gives untouched code 0", out.Low, f.count(scoreSystem))
+	}
+}

@@ -35,7 +35,7 @@ type RunInput struct {
 }
 
 // DefaultThreshold is the score a finding needs by default: the best balance measured between noise and findings kept.
-const DefaultThreshold = 7
+const DefaultThreshold = 6
 
 // DefaultParallel is how many reviewer runs go at once when RunInput.Parallel is zero.
 const DefaultParallel = 4
@@ -129,9 +129,25 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			f.Level = verify.Level(f.Comment, f.Causality)
 		}
 	}
+	// A pre-existing follow-up is about code the change does not touch, which the rubric scores 0, so it skips scoring.
+	var toScore, followUps []Anchored
+	for _, a := range merged {
+		if a.Finding.Level == verify.LevelFollowUp {
+			followUps = append(followUps, a)
+		} else {
+			toScore = append(toScore, a)
+		}
+	}
+	// Only reviewed files reach the scorer: generated, binary and documentation patches would crowd its budget.
+	reviewed := map[string]string{}
+	for _, e := range in.Plan.Ledger {
+		if e.Status == Reviewed {
+			reviewed[e.Path] = in.Patches[e.Path]
+		}
+	}
 	scored := Score(ctx, ScoreInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Model: in.ScoreModel, Threshold: in.Threshold,
-		Findings: merged, Patches: in.Patches})
-	out.Findings, out.Low = scored.Kept, scored.Low
+		Budget: in.Plan.Budget, Findings: toScore, Patches: reviewed})
+	out.Findings, out.Low = append(scored.Kept, followUps...), scored.Low
 	if scored.Note != "" {
 		out.Notes = append(out.Notes, scored.Note)
 	}
