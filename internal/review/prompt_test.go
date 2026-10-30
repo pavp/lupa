@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/pavp/lupa/internal/reach"
 )
 
 func promptInput() PromptInput {
@@ -167,5 +169,47 @@ func TestBuildPromptBoundsTheImporterHints(t *testing.T) {
 	}
 	if !strings.Contains(user[start:start+end], "[truncated]") {
 		t.Error("truncated hints do not say so")
+	}
+}
+
+func TestBuildPromptListsTheCallersAndCalleesOfChangedSymbols(t *testing.T) {
+	in := promptInput()
+	in.Symbols = map[string][]reach.Symbol{
+		"src/a.ts": {
+			{File: "src/a.ts", Name: "load", Line: 3, End: 9,
+				Callers: []reach.Site{{File: "src/a.ts", Line: 12}, {File: "src/page.ts", Line: 4}},
+				Callees: []reach.Callee{{Name: "slug", Site: reach.Site{File: "src/util.ts", Line: 1}}, {Name: "x", Site: reach.Site{File: "src/x.ts"}}}},
+			{File: "src/a.ts", Name: "alone", Line: 11, End: 11},
+		},
+		"src/other.ts": {{File: "src/other.ts", Name: "outside", Line: 1, End: 2, Callers: []reach.Site{{File: "src/q.ts", Line: 1}}}},
+	}
+	user := BuildPrompt(in).User
+	body, ok := dataBlock(user, "symbols")
+	want := "src/a.ts:3-9 load\n  called from: src/a.ts:12, src/page.ts:4\n  calls: slug (src/util.ts:1), x (src/x.ts)\n"
+	if !ok || body != want {
+		t.Errorf("symbols block = %q, want %q", body, want)
+	}
+	if !strings.Contains(user, "# Changed symbols: callers and callees matched by name (misses namespace imports, require and renamed re-exports; not exhaustive)") {
+		t.Error("symbols block has no title")
+	}
+	if strings.Index(user, "LUPA-DATA symbols") > strings.Index(user, "LUPA-DATA change") {
+		t.Error("symbols block comes after the change")
+	}
+	in.Symbols = nil
+	if _, ok := dataBlock(BuildPrompt(in).User, "symbols"); ok {
+		t.Error("symbols block present with no symbols")
+	}
+}
+
+func TestBuildPromptBoundsTheSymbolsBlock(t *testing.T) {
+	var callers []reach.Site
+	for i := range 2000 {
+		callers = append(callers, reach.Site{File: fmt.Sprintf("src/features/feature-%04d.ts", i), Line: i + 1})
+	}
+	in := promptInput()
+	in.Symbols = map[string][]reach.Symbol{"src/a.ts": {{File: "src/a.ts", Name: "load", Line: 1, End: 2, Callers: callers}}}
+	body, ok := dataBlock(BuildPrompt(in).User, "symbols")
+	if !ok || len(body) > symbolLimit+len("\n[truncated]\n") || !strings.Contains(body, "[truncated]") {
+		t.Errorf("symbols block is %d bytes (truncation said: %v), want at most about %d", len(body), strings.Contains(body, "[truncated]"), symbolLimit)
 	}
 }

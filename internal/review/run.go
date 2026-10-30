@@ -9,16 +9,18 @@ import (
 	"time"
 
 	"github.com/pavp/lupa/internal/agent"
+	"github.com/pavp/lupa/internal/reach"
 	"github.com/pavp/lupa/internal/verify"
 )
 
-// RunInput is what the agent review of a planned change needs: the plan, the change's patches and
-// importers by path, the base-branch conventions, the agent and its run settings, and a reader of
+// RunInput is what the agent review of a planned change needs: the plan, the change's patches,
+// importers and changed symbols by path, the base-branch conventions, the agent and its run settings, and a reader of
 // any repo file at the head of the change.
 type RunInput struct {
 	Plan        Result
 	Patches     map[string]string
 	Importers   map[string][]string
+	Symbols     map[string][]reach.Symbol
 	Conventions []Convention
 	Agent       agent.Agent
 	Dir         string
@@ -160,7 +162,7 @@ type groupResult struct {
 
 func reviewOne(ctx context.Context, in RunInput, ag agent.Agent, g Group) groupResult {
 	patch, paths := groupPatch(g)
-	p := BuildPrompt(PromptInput{Patch: patch, Paths: paths, Importers: in.Importers, Conventions: in.Conventions})
+	p := BuildPrompt(PromptInput{Patch: patch, Paths: paths, Importers: in.Importers, Symbols: in.Symbols, Conventions: in.Conventions})
 	r := groupResult{paths: paths}
 	parsed, reason := reviewGroup(ctx, ag, agent.Request{Dir: in.Dir, SystemPrompt: p.System, Prompt: p.User, Timeout: in.Timeout, Schema: reviewSchema}, paths)
 	if reason != "" {

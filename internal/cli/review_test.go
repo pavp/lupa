@@ -420,3 +420,30 @@ func TestReviewPlanTextKeepsTheAgentFlags(t *testing.T) {
 		t.Errorf("plan lacks %q:\n%s", want, stdout)
 	}
 }
+
+func TestReviewRunGivesTheCallersAndCalleesOfChangedSymbols(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	if err := os.Mkdir(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "src/util.ts", "export function slug(s: string) {\n  return s.trim();\n}\n")
+	write(t, dir, "src/load.ts", "import { slug } from './util';\n\nexport function load(id: string) {\n  return id;\n}\n")
+	write(t, dir, "src/page.ts", "import { load } from './load';\n\nload('a');\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	write(t, dir, "src/load.ts", "import { slug } from './util';\n\nexport function load(id: string) {\n  return slug(id);\n}\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "change")
+	gitCmd(t, dir, "switch", "-q", "main")
+
+	var reqs []agent.Request
+	if code, _, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	want := "src/load.ts:3-5 load\n  called from: src/page.ts:3\n  calls: slug (src/util.ts:1)\n"
+	if !strings.Contains(reqs[0].Prompt, want) {
+		t.Errorf("the reviewer prompt lacks the changed symbol %q:\n%s", want, reqs[0].Prompt)
+	}
+}
