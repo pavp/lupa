@@ -46,14 +46,16 @@ func readFile(t *testing.T, path string) string {
 func TestRunArguments(t *testing.T) {
 	base := []string{"-p", "--output-format", "json", "--tools", "Read,Grep,Glob", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence", "--safe-mode", "--system-prompt", "You review code."}
 	tests := []struct {
-		name   string
-		model  string
-		schema string
-		want   []string
+		name      string
+		model     string
+		schema    string
+		subagents bool
+		want      []string
 	}{
-		{"default model", "", "", base},
-		{"model set", "opus", "", append(slices.Clone(base), "--model", "opus")},
-		{"schema set", "", `{"type":"object"}`, append(slices.Clone(base), "--json-schema", `{"type":"object"}`)},
+		{"default model", "", "", false, base},
+		{"model set", "opus", "", false, append(slices.Clone(base), "--model", "opus")},
+		{"schema set", "", `{"type":"object"}`, false, append(slices.Clone(base), "--json-schema", `{"type":"object"}`)},
+		{"subagents add only the Agent tool", "", "", true, slices.Concat(base[:4], []string{"Read,Grep,Glob,Agent"}, base[5:])},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -61,7 +63,7 @@ func TestRunArguments(t *testing.T) {
 			bin := fakeClaude(t, dir, "printf '%s' '"+successEnvelope+"'")
 
 			_, err := Adapter{Bin: bin}.Run(context.Background(), agent.Request{
-				Dir: dir, SystemPrompt: "You review code.", Prompt: "SECRET-PROMPT\nline two", Model: tt.model, Schema: tt.schema,
+				Dir: dir, SystemPrompt: "You review code.", Prompt: "SECRET-PROMPT\nline two", Model: tt.model, Schema: tt.schema, Subagents: tt.subagents,
 			})
 			if err != nil {
 				t.Fatalf("Run: %v", err)

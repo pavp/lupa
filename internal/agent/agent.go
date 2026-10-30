@@ -19,6 +19,8 @@ type Request struct {
 	Model string
 	// Schema is an optional JSON Schema the final answer must follow, for agents that can enforce one.
 	Schema string
+	// Subagents lets the run launch subagents; adapters give them the same read-only tools.
+	Subagents bool
 }
 
 // Response is an agent's final answer with the usage it reported.
