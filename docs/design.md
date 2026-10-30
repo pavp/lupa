@@ -161,10 +161,10 @@ Dependency rules:
 |---|---|---|
 | Headless | `-p` | `-p` |
 | Structured output | `--output-format json` / `stream-json`; `--json-schema` validates the answer into `structured_output` | `--mode json` (also `rpc`) |
-| Read-only tools | `--tools Read,Grep,Glob` | `--tools` allowlist, `--exclude-tools` |
+| Read-only tools | `--tools Read,Grep,Glob` | `--tools read,grep,find,ls` |
 | Model | `--model` | `--model provider/id`, `--thinking` |
 | Ephemeral | `--no-session-persistence` | `--no-session` |
-| Isolate from user context | `--setting-sources ""` (also keeps the reviewed repo's `CLAUDE.md` out, verified), `--safe-mode`, `--strict-mcp-config`, a replacing `--system-prompt`, prompt on stdin | `--no-context-files`, `--no-extensions`, `--no-skills` |
+| Isolate from user context | `--setting-sources ""` (also keeps the reviewed repo's `CLAUDE.md` out, verified), `--safe-mode`, `--strict-mcp-config`, a replacing `--system-prompt`, prompt on stdin | `--no-context-files`, `--no-extensions` plus only the named ones (`-e`), `--no-skills`, `--no-prompt-templates`, `--no-mcp`, `--no-session`, a replacing `--system-prompt`, prompt on stdin |
 
 Never run a reviewer with a permission-bypass mode; the tool allowlist is the boundary. The reviewed tree is a detached worktree at the PR head, never the user's working copy. Each run has a time limit and the prompt a byte budget, so cost is predictable.
 
@@ -173,7 +173,9 @@ A tool-free variant (`--tools ""`, the patch and importers inline only) is kept 
 Gotchas found while testing:
 
 - `claude --bare` requires an API key; it fails on a subscription login.
-- Pi user extensions can autoformat, autofix and inject context; a read-only reviewer must run with `--no-extensions`.
+- Pi user extensions can autoformat, autofix and inject context; a read-only reviewer must run with `--no-extensions`. A provider can itself be an extension, so Lupa loads only the extensions the user names (`--pi-extensions`).
+- With the prompt as an argument and stdin open, `pi -p` waits on stdin; Lupa sends the prompt on stdin.
+- A provider error still exits 0: the last assistant `message_end` carries `stopReason: "error"` and `errorMessage`. A system message's `content` is a string, an assistant's a list of parts.
 - `pi auth check --no-refresh` reported `not_ready` for every provider while real calls worked; test readiness with a minimal call.
 - Pi tool calls arrive as `toolCall` items inside assistant `message_end` events.
 

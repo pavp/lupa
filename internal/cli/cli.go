@@ -17,6 +17,7 @@ import (
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/agent/claude"
+	"github.com/pavp/lupa/internal/agent/pi"
 	"github.com/pavp/lupa/internal/forge/github"
 	"github.com/pavp/lupa/internal/git"
 	"github.com/pavp/lupa/internal/lang/typescript"
@@ -28,7 +29,7 @@ import (
 	"github.com/pavp/lupa/internal/store"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.
@@ -294,14 +295,36 @@ func findingJSONOf(a review.Anchored) findingJSON {
 		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged}
 }
 
+// agentOf builds the named agent's adapter; extensions is a comma-separated list of Pi extension paths.
+func agentOf(name, model, extensions string) (agent.Agent, error) {
+	switch name {
+	case "claude":
+		return claude.Adapter{Model: model}, nil
+	case "pi":
+		var exts []string
+		for _, e := range strings.Split(extensions, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				exts = append(exts, e)
+			}
+		}
+		return pi.Adapter{Model: model, Extensions: exts}, nil
+	}
+	return nil, usageError{fmt.Sprintf("unknown agent %q", name)}
+}
+
 func runReview(args []string, env Env) error {
-	asJSON, planOnly, yes, agentName := false, false, false, "claude"
-	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes}, map[string]*string{"--agent": &agentName})
+	asJSON, planOnly, yes, agentName, model, extensions := false, false, false, "claude", "", ""
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes},
+		map[string]*string{"--agent": &agentName, "--model": &model, "--pi-extensions": &extensions})
 	if err != nil {
 		return err
 	}
-	if agentName != "claude" {
-		return usageError{fmt.Sprintf("unknown agent %q", agentName)}
+	if extensions != "" && agentName != "pi" {
+		return usageError{"--pi-extensions needs --agent pi"}
+	}
+	adapter, err := agentOf(agentName, model, extensions)
+	if err != nil {
+		return err
 	}
 	repo, signals, key, err := mapChange(env, target)
 	if err != nil {
@@ -349,7 +372,7 @@ func runReview(args []string, env Env) error {
 
 	ag := env.Agent
 	if ag == nil {
-		ag = claude.Adapter{}
+		ag = adapter
 	}
 	importers := map[string][]string{}
 	for _, f := range signals.Files {

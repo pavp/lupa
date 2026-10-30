@@ -188,3 +188,17 @@ func TestRunTimesOut(t *testing.T) {
 		t.Errorf("Run took %v, want it to stop near the limit", elapsed)
 	}
 }
+
+func TestRunUsesTheAdapterModelUnlessTheRequestNamesOne(t *testing.T) {
+	for _, tt := range []struct{ adapter, request, want string }{{"opus", "", "opus"}, {"opus", "sonnet", "sonnet"}} {
+		dir := t.TempDir()
+		bin := fakeClaude(t, dir, "printf '%s' '"+successEnvelope+"'")
+		if _, err := (Adapter{Bin: bin, Model: tt.adapter}).Run(context.Background(), agent.Request{Dir: dir, Prompt: "p", Model: tt.request}); err != nil {
+			t.Fatalf("Run: %v", err)
+		}
+		args := strings.Split(readFile(t, filepath.Join(dir, "args")), "\n")
+		if i := slices.Index(args, "--model"); i < 0 || args[i+1] != tt.want || slices.Index(args[i+1:], "--model") >= 0 {
+			t.Errorf("adapter %q, request %q: args = %q, want one --model %s", tt.adapter, tt.request, args, tt.want)
+		}
+	}
+}
