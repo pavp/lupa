@@ -196,6 +196,8 @@ type reviewOut struct {
 		Causality string `json:"causality"`
 		Claim     string `json:"claim"`
 		Quote     string `json:"quote"`
+		Score     *int   `json:"score"`
+		Reason    string `json:"score_reason"`
 	} `json:"findings"`
 	Low []struct {
 		Finding struct{ Claim string } `json:"finding"`
@@ -229,8 +231,9 @@ func TestReviewRunJSON(t *testing.T) {
 		t.Fatalf("findings = %+v, want one", r.Findings)
 	}
 	f := r.Findings[0]
-	if f.File != "b.go" || f.Side != "new" || f.Start != 3 || f.End != 3 || f.Level != "important" || f.Quote != "var B = 1" {
-		t.Errorf("finding = %+v, want b.go new 3-3 important", f)
+	if f.File != "b.go" || f.Side != "new" || f.Start != 3 || f.End != 3 || f.Level != "important" || f.Quote != "var B = 1" ||
+		f.Score == nil || *f.Score != 8 || f.Reason != "any importer can reassign B" {
+		t.Errorf("finding = %+v, want b.go new 3-3 important, scored 8 with its reason", f)
 	}
 	if r.Low == nil || r.Dropped == nil || len(r.Ledger) == 0 || r.Usage.Calls != len(reqs) || len(reqs) != 2 {
 		t.Errorf("low confidence %v, dropped %v, ledger %d, usage %d, requests %d", r.Low, r.Dropped, len(r.Ledger), r.Usage.Calls, len(reqs))

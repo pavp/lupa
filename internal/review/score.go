@@ -106,6 +106,7 @@ func Score(ctx context.Context, in ScoreInput) ScoreResult {
 			res.Notes = append(res.Notes, fmt.Sprintf("scorer: id %d: no score, kept", i))
 			res.Kept = append(res.Kept, f)
 		case s.Score >= in.Threshold:
+			f.Score, f.ScoreReason = &s.Score, s.Reason
 			res.Kept = append(res.Kept, f)
 		default:
 			res.Low = append(res.Low, ScoredFinding{Finding: f, Score: s.Score, Reason: s.Reason})
