@@ -17,6 +17,7 @@ import (
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/agent/claude"
+	"github.com/pavp/lupa/internal/agent/pi"
 	"github.com/pavp/lupa/internal/forge/github"
 	"github.com/pavp/lupa/internal/git"
 	"github.com/pavp/lupa/internal/lang/typescript"
@@ -28,7 +29,7 @@ import (
 	"github.com/pavp/lupa/internal/store"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.
@@ -311,14 +312,52 @@ func evidenceJSON(es []review.Evidence) []review.Evidence {
 	return out
 }
 
+// agentFlagsOf repeats the agent flags a review was given, quoted for a shell, so a suggested command runs the same agent.
+func agentFlagsOf(name, model, extensions string) string {
+	var b strings.Builder
+	for _, f := range [][2]string{{"--agent", name}, {"--model", model}, {"--pi-extensions", extensions}} {
+		if f[1] == "" || (f[0] == "--agent" && f[1] == "claude") {
+			continue
+		}
+		v := f[1]
+		if strings.ContainsAny(v, " \t'\"$`\\") {
+			v = "'" + strings.ReplaceAll(v, "'", `'\''`) + "'"
+		}
+		fmt.Fprintf(&b, " %s %s", f[0], v)
+	}
+	return b.String()
+}
+
+// agentOf builds the named agent's adapter; extensions is a comma-separated list of Pi extension paths.
+func agentOf(name, model, extensions string) (agent.Agent, error) {
+	switch name {
+	case "claude":
+		return claude.Adapter{Model: model}, nil
+	case "pi":
+		var exts []string
+		for _, e := range strings.Split(extensions, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				exts = append(exts, e)
+			}
+		}
+		return pi.Adapter{Model: model, Extensions: exts}, nil
+	}
+	return nil, usageError{fmt.Sprintf("unknown agent %q", name)}
+}
+
 func runReview(args []string, env Env) error {
-	asJSON, planOnly, yes, agentName := false, false, false, "claude"
-	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes}, map[string]*string{"--agent": &agentName})
+	asJSON, planOnly, yes, agentName, model, extensions := false, false, false, "claude", "", ""
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes},
+		map[string]*string{"--agent": &agentName, "--model": &model, "--pi-extensions": &extensions})
 	if err != nil {
 		return err
 	}
-	if agentName != "claude" {
-		return usageError{fmt.Sprintf("unknown agent %q", agentName)}
+	if extensions != "" && agentName != "pi" {
+		return usageError{"--pi-extensions needs --agent pi"}
+	}
+	adapter, err := agentOf(agentName, model, extensions)
+	if err != nil {
+		return err
 	}
 	repo, signals, key, err := mapChange(env, target)
 	if err != nil {
@@ -347,7 +386,7 @@ func runReview(args []string, env Env) error {
 		return err
 	}
 	if !asJSON {
-		if _, err := io.WriteString(env.Stdout, planText(plan, target, !yes)); err != nil {
+		if _, err := io.WriteString(env.Stdout, planText(plan, target, agentFlagsOf(agentName, model, extensions), !yes)); err != nil {
 			return err
 		}
 	}
@@ -366,7 +405,7 @@ func runReview(args []string, env Env) error {
 
 	ag := env.Agent
 	if ag == nil {
-		ag = claude.Adapter{}
+		ag = adapter
 	}
 	importers := map[string][]string{}
 	for _, f := range signals.Files {
@@ -471,8 +510,9 @@ func agentReview(repo git.Repo, head string, in review.RunInput) (out review.Run
 	return review.Run(context.Background(), in), nil
 }
 
-// planText renders the plan; hint adds how to read the change first, for a user who is asked before the run.
-func planText(p review.Result, target string, hint bool) string {
+// planText renders the plan; hint adds how to read the change first, for a user who is asked before the run,
+// and the review command to run then, with the agent flags of this one.
+func planText(p review.Result, target, agentFlags string, hint bool) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Plan: %d %s, %d %s, about %d tokens (estimate)\n", len(p.Groups), plural(len(p.Groups), "group", "groups"),
 		p.Estimate.Runs, plural(p.Estimate.Runs, "agent run", "agent runs"), p.Estimate.Tokens)
@@ -507,7 +547,7 @@ func planText(p review.Result, target string, hint bool) string {
 		}
 	}
 	if hint {
-		fmt.Fprintf(&b, "\nRead the change first (recommended): lupa map %s\nThen run the agent review: lupa review %s --yes\n", target, target)
+		fmt.Fprintf(&b, "\nRead the change first (recommended): lupa map %s\nThen run the agent review: lupa review %s --yes%s\n", target, target, agentFlags)
 	}
 	return b.String()
 }
