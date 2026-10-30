@@ -244,6 +244,7 @@ type findingJSON struct {
 type refutedJSON struct {
 	Finding  findingJSON       `json:"finding"`
 	Evidence []review.Evidence `json:"evidence"`
+	Reason   string            `json:"reason,omitempty"`
 }
 
 type unconfirmedJSON struct {
@@ -285,7 +286,7 @@ func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 			File: c.File, Side: c.Side, Line: c.Line, Code: report.Redact(c.Code)})
 	}
 	for _, f := range out.Refuted {
-		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Evidence: evidenceJSON(f.Evidence)})
+		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Evidence: evidenceJSON(f.Evidence), Reason: report.Redact(f.Reason)})
 	}
 	for _, f := range out.Unconfirmed {
 		r.Unconfirmed = append(r.Unconfirmed, unconfirmedJSON{Finding: findingJSONOf(f.Finding), Reason: report.Redact(f.Reason)})

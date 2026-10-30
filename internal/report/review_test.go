@@ -38,6 +38,7 @@ func sampleReview() ReviewInput {
 			Refuted: []review.Investigated{{
 				Finding:  finding(verify.LevelImportant, verify.CausalityIntroduced, "src/cart.ts", 9, 9, verify.Comment{Claim: "Null deref"}),
 				Evidence: []review.Evidence{{File: "src/guard.ts", Line: 4, Quote: "if (!cart) return"}},
+				Reason:   "blocks: cart reaching the sum as null — guarded at entry",
 			}},
 			Unconfirmed: []review.Investigated{{
 				Finding: finding(verify.LevelBlocking, verify.CausalityIntroduced, "src/pay.ts", 7, 8, verify.Comment{Claim: "Total may overflow"}),
@@ -130,7 +131,7 @@ func TestReview(t *testing.T) {
 		"",
 		"### Refuted",
 		"",
-		"- important · `src/cart.ts:9`: Null deref — evidence `src/guard.ts:4`",
+		"- important · `src/cart.ts:9`: Null deref — evidence `src/guard.ts:4` — blocks: cart reaching the sum as null — guarded at entry",
 		"",
 		"### Dropped",
 		"",

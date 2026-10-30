@@ -93,7 +93,11 @@ func Review(in ReviewInput) []byte {
 	}
 	for _, r := range out.Refuted {
 		f := r.Finding.Finding
-		fmt.Fprintf(&b, "- %s · `%s`: %s — evidence `%s`\n", f.Level, span(f.Location), Redact(f.Comment.Claim), at(r.Evidence[0].File, r.Evidence[0].Line))
+		fmt.Fprintf(&b, "- %s · `%s`: %s — evidence `%s`", f.Level, span(f.Location), Redact(f.Comment.Claim), at(r.Evidence[0].File, r.Evidence[0].Line))
+		if r.Reason != "" {
+			fmt.Fprintf(&b, " — %s", Redact(r.Reason))
+		}
+		b.WriteString("\n")
 	}
 	if len(out.Dropped) > 0 {
 		b.WriteString("\n### Dropped\n\n")

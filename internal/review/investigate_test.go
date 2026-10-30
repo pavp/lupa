@@ -64,7 +64,8 @@ func investigateInput(ag agent.Agent, findings ...Anchored) InvestigateInput {
 func TestInvestigateDecidesEachVerdictByItsEvidence(t *testing.T) {
 	fake := answering(map[string]string{
 		"qty may be undefined": `{"verdict": "confirmed", "reasoning": "qty is optional", "evidence": [{"file": "src/item.ts", "line": 3, "quote": "  qty?: number;"}, {"file": "src/cart.ts", "line": 11, "quote": "` + realQuote + `"}]}`,
-		"items may be null":    `{"verdict": "refuted", "reasoning": "guarded", "evidence": [{"file": "src/cart.ts", "line": 6, "quote": "  if (!items) {"}]}`,
+		"items may be null":    `{"verdict": "refuted", "reasoning": "guarded", "blocks": "items reaching the loop as null", "evidence": [{"file": "src/cart.ts", "line": 6, "quote": "  if (!items) {"}]}`,
+		"mitigated only":       `{"verdict": "refuted", "reasoning": "a job cleans up later", "blocks": "", "evidence": [{"file": "src/cart.ts", "line": 6, "quote": "  if (!items) {"}]}`,
 		"invented evidence":    `{"verdict": "confirmed", "reasoning": "trust me", "evidence": [{"file": "src/item.ts", "line": 2, "quote": "  price: string;"}]}`,
 		"no evidence":          `{"verdict": "confirmed", "reasoning": "obvious", "evidence": []}`,
 		"restated refutation":  `{"verdict": "refuted", "reasoning": "fine", "evidence": [{"file": "src/cart.ts", "line": 11, "quote": "` + realQuote + `"}]}`,
@@ -72,7 +73,7 @@ func TestInvestigateDecidesEachVerdictByItsEvidence(t *testing.T) {
 		"repeated line":        `{"verdict": "confirmed", "reasoning": "closes total", "evidence": [{"file": "src/cart.ts", "line": 13, "quote": "}"}]}`,
 		"malformed":            `sure, it is a bug`,
 	})
-	names := []string{"qty may be undefined", "repeated line", "items may be null", "invented evidence", "no evidence", "restated refutation", "cannot tell", "malformed", "agent down"}
+	names := []string{"qty may be undefined", "repeated line", "items may be null", "mitigated only", "invented evidence", "no evidence", "restated refutation", "cannot tell", "malformed", "agent down"}
 	var findings []Anchored
 	for _, n := range names {
 		findings = append(findings, candidate(n))
@@ -91,6 +92,9 @@ func TestInvestigateDecidesEachVerdictByItsEvidence(t *testing.T) {
 	if len(res.Refuted) != 1 || res.Refuted[0].Finding.Finding.Comment.Claim != "items may be null" || res.Refuted[0].Evidence[0].Line != 6 {
 		t.Fatalf("refuted = %+v, want the guarded finding with its citation", res.Refuted)
 	}
+	if r := res.Refuted[0].Reason; !strings.Contains(r, "items reaching the loop as null") || !strings.Contains(r, "guarded") {
+		t.Errorf("refuted reason = %q, want the blocked step and the reasoning", r)
+	}
 	reasons := map[string]string{}
 	for _, u := range res.Unconfirmed {
 		reasons[u.Finding.Finding.Comment.Claim] = u.Reason
@@ -98,6 +102,7 @@ func TestInvestigateDecidesEachVerdictByItsEvidence(t *testing.T) {
 	want := map[string]string{
 		"invented evidence":   "not found",
 		"no evidence":         "no evidence",
+		"mitigated only":      "names no step of the mechanism",
 		"restated refutation": "flagged code itself",
 		"cannot tell":         "needs runtime data",
 		"malformed":           "malformed",
@@ -118,7 +123,7 @@ func TestInvestigateDecidesEachVerdictByItsEvidence(t *testing.T) {
 	for _, u := range res.Unconfirmed {
 		order = append(order, u.Finding.Finding.Comment.Claim)
 	}
-	if got := strings.Join(order, ","); got != "invented evidence,no evidence,restated refutation,cannot tell,malformed,agent down" {
+	if got := strings.Join(order, ","); got != "mitigated only,invented evidence,no evidence,restated refutation,cannot tell,malformed,agent down" {
 		t.Errorf("unconfirmed order = %q, want input order", got)
 	}
 }
@@ -176,5 +181,18 @@ func TestInvestigateWithNoFindingsMakesNoCall(t *testing.T) {
 	res := Investigate(context.Background(), investigateInput(fake))
 	if fake.Calls() != 0 || res.Calls != 0 || len(res.Confirmed)+len(res.Refuted)+len(res.Unconfirmed) != 0 {
 		t.Errorf("calls %d/%d, result %+v; want nothing", fake.Calls(), res.Calls, res)
+	}
+}
+
+func TestInvestigateSystemKeepsMitigationsOutOfRefuted(t *testing.T) {
+	for _, want := range []string{
+		"refuted: code shows the harm cannot happen on any realistic path",
+		"A mitigation is not a refutation: a scheduled job, a retry, a later cleanup or a fallback that narrows, delays or repairs the harm",
+		"if realistic input still reaches the harm before the mitigation acts, the candidate is confirmed; if you cannot tell, it is unproven.",
+		"For refuted, name in blocks the step of the candidate's mechanism that your evidence makes impossible",
+	} {
+		if !strings.Contains(investigateSystem, want) {
+			t.Errorf("investigator system prompt lacks %q", want)
+		}
 	}
 }
