@@ -121,20 +121,29 @@ func investigateOne(ctx context.Context, in InvestigateInput, a Anchored) (strin
 	if err != nil {
 		return VerdictUnproven, nil, "investigation failed: " + err.Error()
 	}
-	var reply struct {
-		Verdict   string     `json:"verdict"`
-		Reasoning string     `json:"reasoning"`
-		Blocks    string     `json:"blocks"`
-		Evidence  []Evidence `json:"evidence"`
-	}
+	var reply verdictReply
 	if err := decodeOne(resp.Text, &reply); err != nil {
 		return VerdictUnproven, nil, "investigator reply malformed: " + err.Error()
 	}
+	return decide(reply, a, in.Head)
+}
+
+// verdictReply is what a validator answers about one candidate.
+type verdictReply struct {
+	Verdict   string     `json:"verdict"`
+	Reasoning string     `json:"reasoning"`
+	Blocks    string     `json:"blocks"`
+	Evidence  []Evidence `json:"evidence"`
+}
+
+// decide returns the verdict code accepts from a validator's reply, the located evidence, and the reason
+// when the finding stays unconfirmed or is refuted.
+func decide(reply verdictReply, a Anchored, head func(string) (string, bool)) (string, []Evidence, string) {
 	flagged := a.Finding.Location
 	var found []Evidence
 	var missing, self []string
 	for _, e := range reply.Evidence {
-		switch loc, ok := locateEvidence(e, in.Head); {
+		switch loc, ok := locateEvidence(e, head); {
 		case !ok:
 			missing = append(missing, fmt.Sprintf("%s:%d", e.File, e.Line))
 		case reply.Verdict == VerdictRefuted && flagged.Side == "new" && e.File == flagged.File && loc.Start <= flagged.End && loc.End >= flagged.Start:
