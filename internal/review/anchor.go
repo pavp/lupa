@@ -67,6 +67,7 @@ const reasonNotFound = "quote not found after one relocation retry"
 func Anchor(ctx context.Context, in AnchorInput) AnchorResult {
 	var res AnchorResult
 	for _, c := range in.Comments {
+		c.File = renamedPath(c.File, in.Patches)
 		if loc, ok := verify.Locate(c.Quote, c.File, in.Patches, in.Head); ok {
 			res.Findings = append(res.Findings, Anchored{Finding: finding(c, loc, in.Patches)})
 			continue
@@ -86,6 +87,19 @@ func Anchor(ctx context.Context, in AnchorInput) AnchorResult {
 		res.Findings = append(res.Findings, Anchored{Finding: finding(c, loc, in.Patches), Relocated: true})
 	}
 	return res
+}
+
+// renamedPath returns the new path of a renamed file the comment cites by its old path, else the path unchanged.
+func renamedPath(file string, patches map[string]string) string {
+	if _, ok := patches[file]; ok {
+		return file
+	}
+	for p, patch := range patches {
+		if head, _, _ := strings.Cut(patch, "\n@@"); strings.Contains(head+"\n", "\nrename from "+file+"\n") {
+			return p
+		}
+	}
+	return file
 }
 
 func finding(c verify.Comment, loc verify.Location, patches map[string]string) verify.Finding {

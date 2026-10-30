@@ -106,6 +106,9 @@ func Plan(files []mapping.File, patches map[string]string, opts Options) Result 
 		case isDoc(f.Path):
 			r.Ledger = append(r.Ledger, Entry{Path: f.Path, Status: Skipped, Reason: "documentation"})
 			continue
+		case f.OldPath != "" && f.Additions == 0 && f.Deletions == 0:
+			r.Ledger = append(r.Ledger, Entry{Path: f.Path, Status: Skipped, Reason: "renamed without changes"})
+			continue
 		}
 		parts, left := split(f.Path, patches[f.Path], budget)
 		reviewed := Entry{Path: f.Path, Status: Reviewed}

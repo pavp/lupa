@@ -14,6 +14,7 @@ const Schema = "lupa.signals/v0"
 // File is one changed file. Binary files have no line counts.
 type File struct {
 	Path      string `json:"path"`
+	OldPath   string `json:"old_path,omitempty"`
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 	Binary    bool   `json:"binary,omitempty"`
