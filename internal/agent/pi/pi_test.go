@@ -69,7 +69,7 @@ func readFile(t *testing.T, path string) string {
 
 func TestRunArguments(t *testing.T) {
 	base := []string{"-p", "--mode", "json", "--no-extensions", "--no-skills", "--no-context-files", "--no-prompt-templates", "--no-session",
-		"--no-mcp", "--tools", "read,grep,find,ls", "--system-prompt", "You review code."}
+		"--no-mcp", "--no-approve", "--tools", "read,grep,find,ls", "--system-prompt", "You review code.", "--append-system-prompt", ""}
 	tests := []struct {
 		name    string
 		adapter Adapter
