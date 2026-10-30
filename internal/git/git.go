@@ -23,9 +23,11 @@ type UnknownRevisionError struct{ Rev string }
 
 func (e UnknownRevisionError) Error() string { return fmt.Sprintf("unknown revision %q", e.Rev) }
 
-// FileChange is one file's line counts between two commits. Binary files have no line counts.
+// FileChange is one file's line counts between two commits. Binary files have no line counts; OldPath is set
+// only for a renamed file.
 type FileChange struct {
 	Path      string
+	OldPath   string
 	Additions int
 	Deletions int
 	Binary    bool
@@ -138,14 +140,16 @@ func (r Repo) DefaultBranch() (string, error) {
 	return "", errors.New("cannot find the default branch: no origin/HEAD, main or master")
 }
 
-// NumStat returns the per-file line counts of the diff from base to head, renames shown as delete plus add.
+// NumStat returns the per-file line counts of the diff from base to head, a renamed file keyed by its new path.
 func (r Repo) NumStat(base, head string) ([]FileChange, error) {
-	out, err := r.run("diff", "--numstat", "-z", "--no-renames", base, head)
+	out, err := r.run("diff", "--numstat", "-z", renames, base, head)
 	if err != nil {
 		return nil, err
 	}
 	var changes []FileChange
-	for _, rec := range strings.Split(strings.TrimSuffix(out, "\x00"), "\x00") {
+	recs := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
+	for i := 0; i < len(recs); i++ {
+		rec := recs[i]
 		if rec == "" {
 			continue
 		}
@@ -154,6 +158,14 @@ func (r Repo) NumStat(base, head string) ([]FileChange, error) {
 			return nil, fmt.Errorf("unexpected numstat record %q", rec)
 		}
 		c := FileChange{Path: fields[2]}
+		// A rename leaves the path field empty and puts the old and new paths in the next two records.
+		if c.Path == "" {
+			if i+2 >= len(recs) {
+				return nil, fmt.Errorf("unexpected numstat rename record %q", rec)
+			}
+			c.OldPath, c.Path = recs[i+1], recs[i+2]
+			i += 2
+		}
 		if fields[0] == "-" {
 			c.Binary = true
 		} else {
@@ -258,7 +270,7 @@ func (r Repo) GitDir() (string, error) {
 
 // FirstChangedLines returns, per file, the first line the change touches on the head side.
 func (r Repo) FirstChangedLines(base, head string) (map[string]int, error) {
-	out, err := r.run("diff", "--unified=0", "--no-renames", "--no-color", base, head)
+	out, err := r.run("-c", "core.quotePath=false", "diff", "--unified=0", renames, "--no-color", base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +279,8 @@ func (r Repo) FirstChangedLines(base, head string) (map[string]int, error) {
 	for _, l := range strings.Split(out, "\n") {
 		switch {
 		case strings.HasPrefix(l, "+++ "):
-			file = strings.TrimPrefix(strings.TrimPrefix(l, "+++ "), "b/")
+			// git ends the line with a tab when the path holds a space.
+			file = strings.TrimSuffix(strings.TrimPrefix(strings.TrimPrefix(l, "+++ "), "b/"), "\t")
 			if file == "/dev/null" {
 				file = ""
 			}
@@ -289,9 +302,10 @@ func (r Repo) FirstChangedLines(base, head string) (map[string]int, error) {
 	return lines, nil
 }
 
-// Patches returns the unified diff from base to head per file, keyed by path (the old path for a deletion).
+// Patches returns the unified diff from base to head per file, keyed by path (the old path for a deletion, the new
+// path for a rename).
 func (r Repo) Patches(base, head string) (map[string]string, error) {
-	out, err := r.run("-c", "core.quotePath=false", "diff", "--no-renames", "--no-color", "--unified=3", base, head)
+	out, err := r.run("-c", "core.quotePath=false", "diff", renames, "--no-color", "--unified=3", base, head)
 	if err != nil {
 		return nil, err
 	}
@@ -301,7 +315,11 @@ func (r Repo) Patches(base, head string) (map[string]string, error) {
 			p = "diff --git " + p
 		}
 		p = strings.TrimSuffix(p, "diff --git ")
-		// Without renames the header is `diff --git a/<path> b/<path>` with the same path twice, so its
+		if to, ok := renamedTo(p); ok {
+			patches[to] = p
+			continue
+		}
+		// Unless renamed the header is `diff --git a/<path> b/<path>` with the same path twice, so its
 		// length gives the path even when the path holds spaces.
 		names, _, _ := strings.Cut(strings.TrimPrefix(p, "diff --git "), "\n")
 		if n := (len(names) - 5) / 2; n > 0 {
@@ -309,6 +327,25 @@ func (r Repo) Patches(base, head string) (map[string]string, error) {
 		}
 	}
 	return patches, nil
+}
+
+// renames turns rename detection on at git's default similarity, whatever the user's diff.renames says.
+const renames = "--find-renames"
+
+// renamedTo returns the new path from a patch's `rename to` header line.
+func renamedTo(patch string) (string, bool) {
+	for _, l := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(l, "@@") {
+			break
+		}
+		if to, ok := strings.CutPrefix(l, "rename to "); ok {
+			if unq, err := strconv.Unquote(to); err == nil {
+				return unq, true
+			}
+			return to, true
+		}
+	}
+	return "", false
 }
 
 // Worktree checks rev out in a detached worktree in a fresh directory outside the repository.

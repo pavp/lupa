@@ -338,3 +338,30 @@ func TestMapSinceLastLook(t *testing.T) {
 		t.Errorf("since_last_look = %+v, want since %s with only c.txt", since, firstHead)
 	}
 }
+
+func TestMapListsAMovedFileOnceByItsNewPath(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	write(t, dir, "a.go", "package a\n\nvar A = 1\nvar B = 2\nvar C = 3\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	gitCmd(t, dir, "mv", "a.go", "moved.go")
+	gitCmd(t, dir, "commit", "-q", "-m", "move")
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var s struct {
+		Files []struct {
+			Path    string `json:"path"`
+			OldPath string `json:"old_path"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &s); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	if len(s.Files) != 1 || s.Files[0].Path != "moved.go" || s.Files[0].OldPath != "a.go" {
+		t.Errorf("files = %+v, want one entry moved.go from a.go", s.Files)
+	}
+}

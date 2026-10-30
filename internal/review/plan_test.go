@@ -107,6 +107,13 @@ func TestPlan(t *testing.T) {
 				{Path: "package-lock.json", Status: Skipped, Reason: "generated: lockfile"},
 			},
 		},
+		{
+			name:    "a rename without changes is not reviewed",
+			files:   []mapping.File{{Path: "b/new.go", OldPath: "a/old.go", Class: mapping.Skim}},
+			patches: map[string]string{"b/new.go": "diff --git a/a/old.go b/b/new.go\nsimilarity index 100%\nrename from a/old.go\nrename to b/new.go\n"},
+			budget:  1000,
+			ledger:  []Entry{{Path: "b/new.go", Status: Skipped, Reason: "renamed without changes"}},
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
