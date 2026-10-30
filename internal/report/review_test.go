@@ -20,6 +20,7 @@ func sampleReview() ReviewInput {
 		Quote: "for (let i = 1; i < items.length; i++) {\n  total += items[i]"})
 	blocking.Relocated = true
 	blocking.Finding.Merged = 2
+	blocking.Evidence = []review.Evidence{{File: "src/cart.ts", Line: 5, Quote: "for (let i = 1;"}, {File: "src/sum.ts", Line: 12, Quote: "sum(items)"}}
 	return ReviewInput{
 		Base: "bbbbbbbbbb",
 		Head: "hhhhhhhhhh",
@@ -34,9 +35,13 @@ func sampleReview() ReviewInput {
 				finding(verify.LevelNote, verify.CausalityBehaviorActivated, "src/ui.ts", 3, 3, verify.Comment{
 					Claim: "Label is now shown", Mechanism: "the flag defaults to true", Fix: "Default the flag to false", Quote: "show: true"}),
 			},
-			Refuted: []review.RefutedFinding{{
+			Refuted: []review.Investigated{{
 				Finding:  finding(verify.LevelImportant, verify.CausalityIntroduced, "src/cart.ts", 9, 9, verify.Comment{Claim: "Null deref"}),
-				Citation: review.Citation{File: "src/guard.ts", Line: 4, Quote: "if (!cart) return"},
+				Evidence: []review.Evidence{{File: "src/guard.ts", Line: 4, Quote: "if (!cart) return"}},
+			}},
+			Unconfirmed: []review.Investigated{{
+				Finding: finding(verify.LevelBlocking, verify.CausalityIntroduced, "src/pay.ts", 7, 8, verify.Comment{Claim: "Total may overflow"}),
+				Reason:  "unproven: no caller passes a large total",
 			}},
 			Dropped: []review.Drop{
 				{Stage: review.StageSchema, Group: 1, Reason: "missing field: fix", Comment: verify.Comment{File: "src/cart.ts"}},
@@ -59,7 +64,7 @@ func TestReview(t *testing.T) {
 	want := strings.Join([]string{
 		"## Lupa review — `bbbbbbb..hhhhhhh`",
 		"",
-		"4 findings: 1 blocking, 1 important, 1 note, 1 follow-up · 2 dropped · 1 refuted · 3 agent runs, $0.12",
+		"4 findings: 1 blocking, 1 important, 1 note, 1 follow-up · 2 dropped · 1 refuted · 1 unconfirmed · 3 agent runs, $0.12",
 		"",
 		"### Blocking",
 		"",
@@ -73,6 +78,8 @@ func TestReview(t *testing.T) {
 		"```",
 		"",
 		"Fix: Start the loop at 0",
+		"",
+		"Evidence: `src/cart.ts:5`, `src/sum.ts:12`",
 		"",
 		"### Important",
 		"",
@@ -117,11 +124,18 @@ func TestReview(t *testing.T) {
 		"- Skipped: `package-lock.json`: generated: lockfile",
 		"- Not reviewed: `src/big.ts`: hunk at line 1 exceeds the prompt budget (70000 bytes > 60000)",
 		"",
+		"### Unconfirmed",
+		"",
+		"- blocking · `src/pay.ts:7-8`: Total may overflow — unproven: no caller passes a large total",
+		"",
+		"### Refuted",
+		"",
+		"- important · `src/cart.ts:9`: Null deref — evidence `src/guard.ts:4`",
+		"",
 		"### Dropped",
 		"",
 		"- schema (group 1) · `src/cart.ts`: missing field: fix",
 		"- anchor (group 2) · `src/api.ts`: quote not found in the change — Wrong header",
-		"- refuted · `src/cart.ts:9`: Null deref — citation `src/guard.ts:4`",
 		"",
 	}, "\n")
 	if got := string(Review(sampleReview())); got != want {
@@ -137,7 +151,7 @@ func TestReviewSingular(t *testing.T) {
 	in.Out.Usage = review.Usage{Calls: 1, CostUSD: 0.04}
 	got := string(Review(in))
 	for _, want := range []string{
-		"1 finding: 1 blocking, 0 important, 0 notes, 0 follow-ups · 1 dropped · 1 refuted · 1 agent run, $0.04\n",
+		"1 finding: 1 blocking, 0 important, 0 notes, 0 follow-ups · 1 dropped · 1 refuted · 1 unconfirmed · 1 agent run, $0.04\n",
 		"1 file reviewed, 0 skipped, 0 not reviewed\n",
 	} {
 		if !strings.Contains(got, want) {
@@ -152,7 +166,7 @@ func TestReviewNoFindings(t *testing.T) {
 	want := strings.Join([]string{
 		"## Lupa review — `bbbbbbb..hhhhhhh`",
 		"",
-		"0 findings: 0 blocking, 0 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 2 agent runs, $0.02",
+		"0 findings: 0 blocking, 0 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 0 unconfirmed · 2 agent runs, $0.02",
 		"",
 		"No findings.",
 		"",
@@ -191,9 +205,13 @@ func TestReviewShowsRunNotesAndRedactsReasons(t *testing.T) {
 	in.Out.Notes = []string{"filter run failed: claude: exit status 1: token " + secret}
 	in.Out.Ledger = []review.Entry{{Path: "a.ts", Status: review.NotReviewed, Reason: "agent run failed: Bearer " + strings.Repeat("c", 20)}}
 	in.Out.Dropped = []review.Drop{{Stage: review.StageAnchor, Group: 1, Reason: "relocation failed: key " + secret, Comment: verify.Comment{File: "a.ts"}}}
+	in.Out.Unconfirmed[0].Reason = "investigation failed: token " + secret
 	got := string(Review(in))
 	if !strings.Contains(got, "### Run notes\n\n- filter run failed: claude: exit status 1: token ‹redacted›\n") {
 		t.Errorf("the run notes are missing or not redacted:\n%s", got)
+	}
+	if !strings.Contains(got, "Total may overflow — investigation failed: token ‹redacted›\n") {
+		t.Errorf("the unconfirmed reason is missing or not redacted:\n%s", got)
 	}
 	for _, leak := range []string{"ghp_aaa", "cccccccc"} {
 		if strings.Contains(got, leak) {

@@ -57,23 +57,26 @@ type Usage struct {
 	OutputTokens int
 }
 
-// RunOutput is the verified review: the findings that stay, the refuted ones, the dropped comments,
-// the plan's coverage ledger updated by the run, the usage, the filter's and claim check's notes, and
-// the description's claims as checked, nil when there was no sentence to check.
+// RunOutput is the verified review: the confirmed findings and the pre-existing follow-ups in merge
+// order, the refuted and the unconfirmed ones, the dropped comments, the plan's coverage ledger
+// updated by the run, the usage, the claim check's notes, and the description's claims as checked,
+// nil when there was no sentence to check.
 type RunOutput struct {
-	Claims   []ClaimCheck
-	Findings []Anchored
-	Refuted  []RefutedFinding
-	Dropped  []Drop
-	Ledger   []Entry
-	Usage    Usage
-	Notes    []string
+	Claims      []ClaimCheck
+	Findings    []Anchored
+	Refuted     []Investigated
+	Unconfirmed []Investigated
+	Dropped     []Drop
+	Ledger      []Entry
+	Usage       Usage
+	Notes       []string
 }
 
 const reasonUninspected = "the reviewer did not report inspecting it"
 
 // Run reviews the planned groups, up to Parallel at a time, verifies and anchors their comments,
-// then dedupes the findings of every group and filters them in one refuter run. Results are merged
+// then dedupes the findings of every group and investigates each one but the pre-existing
+// follow-ups, which are kept as they are. Results are merged
 // in group order, whatever order the runs finish in. An unusable answer gets one retry; a failed
 // group marks its files not reviewed and the other groups still run.
 func Run(ctx context.Context, in RunInput) RunOutput {
@@ -123,16 +126,27 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			f.Level = verify.Level(f.Comment, f.Causality)
 		}
 	}
-	filtered := Filter(ctx, FilterInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: merged, Head: in.Head})
-	out.Findings, out.Refuted = filtered.Kept, filtered.Refuted
-	if filtered.Note != "" {
-		out.Notes = append(out.Notes, filtered.Note)
+	candidates := slices.DeleteFunc(slices.Clone(merged), followUp)
+	inv := Investigate(ctx, InvestigateInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
+		Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
+	confirmed := inv.Confirmed
+	for _, f := range merged {
+		switch {
+		case followUp(f):
+			out.Findings = append(out.Findings, f)
+		case len(confirmed) > 0 && confirmed[0].Finding.Finding == f.Finding:
+			f.Evidence = confirmed[0].Evidence
+			out.Findings = append(out.Findings, f)
+			confirmed = confirmed[1:]
+		}
 	}
-	out.Notes = append(out.Notes, filtered.Notes...)
+	out.Refuted, out.Unconfirmed = inv.Refuted, inv.Unconfirmed
 	out.Claims = claims.Checks
 	out.Notes = append(out.Notes, claims.Notes...)
 	return out
 }
+
+func followUp(a Anchored) bool { return a.Finding.Level == verify.LevelFollowUp }
 
 // groupResult is what one group's review leaves for the merge; a non-empty reason means the
 // group was not reviewed.

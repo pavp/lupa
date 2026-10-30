@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -154,16 +155,16 @@ func newRunRepo(t *testing.T) (dir, base, head string) {
 
 var groupPaths = regexp.MustCompile(`The paths of this group, for files_inspected: (\[.*\])`)
 
-// fakeAgent answers every reviewer run with one severe comment on `var B = 1` and the refuter
-// with corroborated, and records each request.
+// fakeAgent answers every reviewer run with one severe comment on `var B = 1` and the investigator
+// with a confirmation citing that line, and records each request.
 func fakeAgent(t *testing.T, reqs *[]agent.Request) *agent.Fake {
 	var mu sync.Mutex
 	return &agent.Fake{Reply: func(req agent.Request) (string, error) {
 		mu.Lock()
 		*reqs = append(*reqs, req)
 		mu.Unlock()
-		if strings.Contains(req.Prompt, "Try to disprove") {
-			return `{"results": [{"id": 0, "outcome": "corroborated"}]}`, nil
+		if strings.Contains(req.Prompt, "Investigate the candidate defect") {
+			return `{"verdict": "confirmed", "reasoning": "importers reassign it", "evidence": [{"file": "b.go", "line": 3, "quote": "var B = 1"}]}`, nil
 		}
 		m := groupPaths.FindStringSubmatch(req.Prompt)
 		if m == nil {
@@ -185,20 +186,22 @@ type reviewOut struct {
 	Base     string `json:"base"`
 	Head     string `json:"head"`
 	Findings []struct {
-		File      string `json:"file"`
-		Side      string `json:"side"`
-		Start     int    `json:"start"`
-		End       int    `json:"end"`
-		Severity  string `json:"severity"`
-		Level     string `json:"level"`
-		Causality string `json:"causality"`
-		Claim     string `json:"claim"`
-		Quote     string `json:"quote"`
+		File      string            `json:"file"`
+		Side      string            `json:"side"`
+		Start     int               `json:"start"`
+		End       int               `json:"end"`
+		Severity  string            `json:"severity"`
+		Level     string            `json:"level"`
+		Causality string            `json:"causality"`
+		Claim     string            `json:"claim"`
+		Quote     string            `json:"quote"`
+		Evidence  []review.Evidence `json:"evidence"`
 	} `json:"findings"`
-	Refuted []json.RawMessage `json:"refuted"`
-	Dropped []json.RawMessage `json:"dropped"`
-	Ledger  []json.RawMessage `json:"ledger"`
-	Usage   struct {
+	Refuted     []json.RawMessage `json:"refuted"`
+	Unconfirmed []json.RawMessage `json:"unconfirmed"`
+	Dropped     []json.RawMessage `json:"dropped"`
+	Ledger      []json.RawMessage `json:"ledger"`
+	Usage       struct {
 		Calls int `json:"calls"`
 	} `json:"usage"`
 }
@@ -226,8 +229,12 @@ func TestReviewRunJSON(t *testing.T) {
 	if f.File != "b.go" || f.Side != "new" || f.Start != 3 || f.End != 3 || f.Level != "important" || f.Quote != "var B = 1" {
 		t.Errorf("finding = %+v, want b.go new 3-3 important", f)
 	}
-	if r.Refuted == nil || r.Dropped == nil || len(r.Ledger) == 0 || r.Usage.Calls != len(reqs) || len(reqs) != 2 {
-		t.Errorf("refuted %v, dropped %v, ledger %d, usage %d, requests %d", r.Refuted, r.Dropped, len(r.Ledger), r.Usage.Calls, len(reqs))
+	if want := []review.Evidence{{File: "b.go", Line: 3, Quote: "var B = 1"}}; !reflect.DeepEqual(f.Evidence, want) {
+		t.Errorf("finding evidence = %+v, want %+v", f.Evidence, want)
+	}
+	if r.Refuted == nil || r.Unconfirmed == nil || r.Dropped == nil || len(r.Ledger) == 0 || r.Usage.Calls != len(reqs) || len(reqs) != 2 {
+		t.Errorf("refuted %v, unconfirmed %v, dropped %v, ledger %d, usage %d, requests %d",
+			r.Refuted, r.Unconfirmed, r.Dropped, len(r.Ledger), r.Usage.Calls, len(reqs))
 	}
 
 	saved, err := os.ReadFile(filepath.Join(dir, ".git", "lupa", "feature", head[:7], "review.json"))
@@ -292,7 +299,7 @@ func TestReviewRunAsks(t *testing.T) {
 				}
 				return
 			}
-			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 2 agent runs, $0.00\n"; len(reqs) != 2 || !strings.Contains(stdout, want) {
+			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 0 unconfirmed · 2 agent runs, $0.00\n"; len(reqs) != 2 || !strings.Contains(stdout, want) {
 				t.Errorf("agent calls %d, want summary %q in:\n%s", len(reqs), want, stdout)
 			}
 		})
@@ -337,12 +344,15 @@ func TestReviewJSONRedacts(t *testing.T) {
 	secret := "ghp_" + strings.Repeat("a", 36)
 	c := verify.Comment{File: "a.go", Claim: "leaks " + secret, Mechanism: "token=" + secret, Fix: "drop " + secret, Quote: `password = "hunter2hunter2"`}
 	a := review.Anchored{Finding: verify.Finding{Comment: c, Location: verify.Location{File: "a.go", Start: 1, End: 1}}}
+	confirmed := a
+	confirmed.Evidence = []review.Evidence{{File: "a.go", Line: 3, Quote: "token " + secret}}
 	out := review.RunOutput{
-		Findings: []review.Anchored{a},
-		Refuted:  []review.RefutedFinding{{Finding: a, Citation: review.Citation{File: "a.go", Line: 2, Quote: "key " + secret}}},
-		Dropped:  []review.Drop{{Stage: review.StageAnchor, Comment: c, Reason: "relocation failed: " + secret}},
-		Ledger:   []review.Entry{{Path: "b.go", Status: review.NotReviewed, Reason: "agent run failed: " + secret}},
-		Notes:    []string{"filter run failed: " + secret},
+		Findings:    []review.Anchored{confirmed},
+		Refuted:     []review.Investigated{{Finding: a, Evidence: []review.Evidence{{File: "a.go", Line: 2, Quote: "key " + secret}}}},
+		Unconfirmed: []review.Investigated{{Finding: a, Reason: "investigation failed: " + secret}},
+		Dropped:     []review.Drop{{Stage: review.StageAnchor, Comment: c, Reason: "relocation failed: " + secret}},
+		Ledger:      []review.Entry{{Path: "b.go", Status: review.NotReviewed, Reason: "agent run failed: " + secret}},
+		Notes:       []string{"filter run failed: " + secret},
 	}
 	b, err := json.Marshal(reviewJSONOf("b", "h", out))
 	if err != nil {
@@ -351,6 +361,12 @@ func TestReviewJSONRedacts(t *testing.T) {
 	if s := string(b); strings.Contains(s, "ghp_aaa") || strings.Contains(s, "hunter2") || !strings.Contains(s, `password = \"‹redacted›\"`) ||
 		!strings.Contains(s, `"notes":["filter run failed: ‹redacted›"]`) {
 		t.Errorf("JSON not redacted: %s", s)
+	}
+	for _, want := range []string{`"evidence":[{"file":"a.go","line":3,"quote":"token ‹redacted›"}]`,
+		`"evidence":[{"file":"a.go","line":2,"quote":"key ‹redacted›"}]`, `"reason":"investigation failed: ‹redacted›"}]`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("JSON lacks %s: %s", want, b)
+		}
 	}
 }
 
