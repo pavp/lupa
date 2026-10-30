@@ -236,12 +236,14 @@ func TestDiffsFollowRenames(t *testing.T) {
 	gitCmd(t, dir, "config", "diff.renames", "false")
 	write("old dir/a.go", body)
 	write("b.txt", "same\n")
+	write("ñandú.go", "x\ny\n")
 	gitCmd(t, dir, "add", ".")
 	gitCmd(t, dir, "commit", "-q", "-m", "base")
 	base := gitCmd(t, dir, "rev-parse", "HEAD")
 	gitCmd(t, dir, "mv", "old dir", "new dir")
 	gitCmd(t, dir, "mv", "b.txt", "moved.txt")
 	write("new dir/a.go", strings.Replace(body, "l7\n", "seven\n", 1))
+	write("ñandú.go", "x\nz\n")
 	gitCmd(t, dir, "add", "-A")
 	gitCmd(t, dir, "commit", "-q", "-m", "move")
 	head := gitCmd(t, dir, "rev-parse", "HEAD")
@@ -251,7 +253,8 @@ func TestDiffsFollowRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []FileChange{{Path: "moved.txt", OldPath: "b.txt"}, {Path: "new dir/a.go", OldPath: "old dir/a.go", Additions: 1, Deletions: 1}}
+	want := []FileChange{{Path: "moved.txt", OldPath: "b.txt"}, {Path: "new dir/a.go", OldPath: "old dir/a.go", Additions: 1, Deletions: 1},
+		{Path: "ñandú.go", Additions: 1, Deletions: 1}}
 	if !reflect.DeepEqual(changes, want) {
 		t.Errorf("numstat = %+v, want %+v", changes, want)
 	}
@@ -260,7 +263,7 @@ func TestDiffsFollowRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(patches) != 2 || !strings.Contains(patches["new dir/a.go"], "-l7\n+seven\n") || strings.Contains(patches["new dir/a.go"], "+l1\n") {
+	if len(patches) != 3 || !strings.Contains(patches["new dir/a.go"], "-l7\n+seven\n") || strings.Contains(patches["new dir/a.go"], "+l1\n") {
 		t.Errorf("patches = %q, want the edited rename keyed by its new path with only its changed line", patches)
 	}
 	if p := patches["moved.txt"]; !strings.Contains(p, "rename to moved.txt") || strings.Contains(p, "@@") {
@@ -271,7 +274,7 @@ func TestDiffsFollowRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(first, map[string]int{"new dir/a.go": 7}) {
-		t.Errorf("first changed lines = %v, want new dir/a.go at 7", first)
+	if !reflect.DeepEqual(first, map[string]int{"new dir/a.go": 7, "ñandú.go": 2}) {
+		t.Errorf("first changed lines = %v, want new dir/a.go at 7 and ñandú.go at 2", first)
 	}
 }
