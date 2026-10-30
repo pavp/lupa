@@ -19,6 +19,8 @@ type Request struct {
 	Model string
 	// Schema is an optional JSON Schema the final answer must follow, for agents that can enforce one.
 	Schema string
+	// NoTools runs without any tool, for a run that judges only what its prompt carries.
+	NoTools bool
 }
 
 // Response is an agent's final answer with the usage it reported.

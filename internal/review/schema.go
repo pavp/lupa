@@ -25,4 +25,8 @@ const (
 		`"outcome":{"type":"string","enum":["supported","unsupported","not_judgeable"]},` +
 		`"file":{"type":"string"},"quote":{"type":"string"}},` +
 		`"required":["id","claim","outcome"],"additionalProperties":false}}},"required":["results"],"additionalProperties":false}`
+
+	scoreSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{` +
+		`"id":{"type":"integer"},"score":{"type":"integer"},"reason":{"type":"string"}},` +
+		`"required":["id","score","reason"],"additionalProperties":false}}},"required":["results"],"additionalProperties":false}`
 )
