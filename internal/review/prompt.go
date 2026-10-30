@@ -95,6 +95,8 @@ func (d block) title() string {
 		return "# Patch of the comment's file"
 	case "finding":
 		return "# Finding to check"
+	case "candidate":
+		return "# Candidate defect to investigate"
 	case "description":
 		return "# Sentences of the pull request description"
 	default:
