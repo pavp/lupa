@@ -31,6 +31,9 @@ type RunInput struct {
 	// Sentences of the PR description to check against ClaimPatches, the patches of the files a claim may cite.
 	Sentences    []string
 	ClaimPatches map[string]string
+	// Orchestrate reviews every group in one agent session with reviewer and validator subagents,
+	// for an agent that can run them; the code checks stay the same.
+	Orchestrate bool
 }
 
 // DefaultParallel is how many reviewer runs go at once when RunInput.Parallel is zero.
@@ -97,7 +100,14 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			claims = CheckClaims(ctx, ClaimsInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Sentences: in.Sentences, Patches: in.ClaimPatches})
 		}()
 	}
+	var anchored []Anchored
+	if in.Orchestrate {
+		anchored = orchestratedFindings(ctx, in, ag, &out)
+	}
 	for i, g := range in.Plan.Groups {
+		if in.Orchestrate {
+			break
+		}
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -108,8 +118,10 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	}
 	wg.Wait()
 
-	var anchored []Anchored
 	for i, r := range results {
+		if in.Orchestrate {
+			break
+		}
 		id := in.Plan.Groups[i].ID
 		if r.reason != "" {
 			out.Ledger = markGroup(out.Ledger, r.paths, id, r.reason)
@@ -129,8 +141,13 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 		}
 	}
 	candidates := slices.DeleteFunc(slices.Clone(merged), followUp)
-	inv := Investigate(ctx, InvestigateInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
-		Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
+	var inv InvestigateResult
+	if in.Orchestrate {
+		inv = validate(candidates, in.Head)
+	} else {
+		inv = Investigate(ctx, InvestigateInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
+			Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
+	}
 	confirmed := inv.Confirmed
 	for _, f := range merged {
 		switch {
@@ -247,8 +264,11 @@ func dedupe(fs []Anchored) []Anchored {
 		for i < len(fs) && fs[i].Finding.Comment != f.Comment {
 			i++
 		}
-		relocated := i < len(fs) && fs[i].Relocated
-		out = append(out, Anchored{Finding: f, Relocated: relocated})
+		a := Anchored{Finding: f}
+		if i < len(fs) {
+			a.Relocated, a.validation = fs[i].Relocated, fs[i].validation
+		}
+		out = append(out, a)
 		i++
 	}
 	return out

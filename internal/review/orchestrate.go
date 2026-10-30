@@ -148,3 +148,55 @@ func fill(o orchestrated, groups map[int]json.RawMessage) orchestrated {
 	o.parsed = parsed
 	return o
 }
+
+// reasonNotValidated says why a candidate the session returned without a validation stays unconfirmed.
+const reasonNotValidated = "not validated: the orchestrated review returned no verdict for it"
+
+// orchestratedFindings anchors each group's comments one by one, so each keeps its validation, and records
+// in out the groups and files left unreviewed and the comments dropped.
+func orchestratedFindings(ctx context.Context, in RunInput, ag agent.Agent, out *RunOutput) []Anchored {
+	var anchored []Anchored
+	for _, o := range orchestrate(ctx, in, ag) {
+		if o.reason != "" {
+			out.Ledger = markGroup(out.Ledger, o.paths, o.id, o.reason)
+			continue
+		}
+		out.Ledger = markGroup(out.Ledger, o.parsed.Uninspected, o.id, reasonUninspected)
+		for _, d := range o.parsed.Dropped {
+			out.Dropped = append(out.Dropped, Drop{Stage: StageSchema, Group: o.id, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
+		}
+		for i, c := range o.parsed.Comments {
+			res := Anchor(ctx, AnchorInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Comments: []verify.Comment{c}, Patches: in.Patches, Head: in.Head})
+			for _, d := range res.Dropped {
+				out.Dropped = append(out.Dropped, Drop{Stage: StageAnchor, Group: o.id, Reason: d.Reason, Comment: d.Comment})
+			}
+			for _, f := range res.Findings {
+				f.validation = o.validations[i]
+				anchored = append(anchored, f)
+			}
+		}
+	}
+	return anchored
+}
+
+// validate decides each candidate from the session's validation with the investigator's rules.
+func validate(candidates []Anchored, head func(string) (string, bool)) InvestigateResult {
+	var res InvestigateResult
+	for _, a := range candidates {
+		if a.validation == nil {
+			res.Unconfirmed = append(res.Unconfirmed, Investigated{Finding: a, Reason: reasonNotValidated})
+			continue
+		}
+		verdict, ev, reason := decide(*a.validation, a, head)
+		inv := Investigated{Finding: a, Evidence: ev, Reason: reason}
+		switch verdict {
+		case VerdictConfirmed:
+			res.Confirmed = append(res.Confirmed, inv)
+		case VerdictRefuted:
+			res.Refuted = append(res.Refuted, inv)
+		default:
+			res.Unconfirmed = append(res.Unconfirmed, inv)
+		}
+	}
+	return res
+}
