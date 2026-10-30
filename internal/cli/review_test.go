@@ -88,7 +88,7 @@ func TestReviewPlanJSON(t *testing.T) {
 		}
 	}
 	empty := review.BuildPrompt(review.PromptInput{})
-	if overhead := len(empty.System) + len(empty.User); p.Estimate.Runs != 2 || p.Estimate.Tokens != (p.Groups[0].Bytes+overhead+3)/4+review.ReadingTokens {
+	if overhead := len(empty.System) + len(empty.User); p.Estimate.Runs != 1 || p.Estimate.Tokens != (p.Groups[0].Bytes+overhead+3)/4+review.ReadingTokens {
 		t.Errorf("estimate = %+v for a group of %d bytes", p.Estimate, p.Groups[0].Bytes)
 	}
 }
@@ -100,7 +100,7 @@ func TestReviewPlanText(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	for _, want := range []string{
-		"Plan: 1 group, 2 agent runs, about ",
+		"Plan: 1 group, 1 agent run, about ",
 		" tokens (estimate)",
 		"a.txt",
 		"package-lock.json: generated: lockfile",
@@ -158,6 +158,23 @@ func newRunRepo(t *testing.T) (dir, base, head string) {
 
 var groupPaths = regexp.MustCompile(`The paths of this group, for files_inspected: (\[.*\])`)
 
+var sessionGroup = regexp.MustCompile(`(?m)^- group (\d+): \S+, paths for files_inspected: (\[.*\])$`)
+
+// sessionReply answers an orchestrated review prompt: every group it lists, inspected, and the comment,
+// when not empty, in the group whose paths name its file.
+func sessionReply(prompt, comment string) string {
+	var groups []string
+	for _, m := range sessionGroup.FindAllStringSubmatch(prompt, -1) {
+		comments := ""
+		var file struct{ File string }
+		if comment != "" && json.Unmarshal([]byte(comment), &file) == nil && strings.Contains(m[2], `"`+file.File+`"`) {
+			comments = comment
+		}
+		groups = append(groups, `{"id": `+m[1]+`, "files_inspected": `+m[2]+`, "comments": [`+comments+`]}`)
+	}
+	return `{"groups": [` + strings.Join(groups, ", ") + `]}`
+}
+
 // fakeAgent answers every reviewer run with one severe comment on `var B = 1` and the investigator
 // with a confirmation citing that line, and records each request.
 func fakeAgent(t *testing.T, reqs *[]agent.Request) *agent.Fake {
@@ -166,6 +183,9 @@ func fakeAgent(t *testing.T, reqs *[]agent.Request) *agent.Fake {
 		mu.Lock()
 		*reqs = append(*reqs, req)
 		mu.Unlock()
+		if req.Subagents {
+			return sessionReply(req.Prompt, `{"file": "b.go", "severity": "severe", "claim": "B is exported mutable state", "mechanism": "any importer can reassign B", "fix": "make B a const", "quote": "var B = 1", "quote_settles": false, "validation": {"verdict": "confirmed", "reasoning": "importers reassign it", "blocks": "", "evidence": [{"file": "b.go", "line": 3, "quote": "var B = 1"}]}}`), nil
+		}
 		if strings.Contains(req.Prompt, "Investigate the candidate defect") {
 			return `{"verdict": "confirmed", "reasoning": "importers reassign it", "evidence": [{"file": "b.go", "line": 3, "quote": "var B = 1"}]}`, nil
 		}
@@ -235,8 +255,8 @@ func TestReviewRunJSON(t *testing.T) {
 	if want := []review.Evidence{{File: "b.go", Line: 3, Quote: "var B = 1"}}; !reflect.DeepEqual(f.Evidence, want) {
 		t.Errorf("finding evidence = %+v, want %+v", f.Evidence, want)
 	}
-	if r.Refuted == nil || r.Unconfirmed == nil || r.Dropped == nil || len(r.Ledger) == 0 || r.Usage.Calls != len(reqs) || len(reqs) != 2 {
-		t.Errorf("refuted %v, unconfirmed %v, dropped %v, ledger %d, usage %d, requests %d",
+	if r.Refuted == nil || r.Unconfirmed == nil || r.Dropped == nil || len(r.Ledger) == 0 || r.Usage.Calls != len(reqs) || len(reqs) != 1 || !reqs[0].Subagents {
+		t.Errorf("refuted %v, unconfirmed %v, dropped %v, ledger %d, usage %d, requests %d; want one orchestrated session",
 			r.Refuted, r.Unconfirmed, r.Dropped, len(r.Ledger), r.Usage.Calls, len(reqs))
 	}
 
@@ -262,8 +282,12 @@ func TestReviewRunConventionsFromBase(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	dir, _, _ := newRunRepo(t)
 	var reqs []agent.Request
-	if code, _, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json"); code != 0 {
+	// Pi keeps one run per group, whose prompt carries the conventions inline.
+	if code, _, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json", "--agent", "pi"); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if reqs[0].Subagents {
+		t.Errorf("a Pi review asked for subagents")
 	}
 	prompt := reqs[0].Prompt
 	if !strings.Contains(prompt, "Path: AGENTS.md\n\nBASE-RULE: use tabs") {
@@ -302,7 +326,7 @@ func TestReviewRunAsks(t *testing.T) {
 				}
 				return
 			}
-			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 0 unconfirmed · 2 agent runs, $0.00\n"; len(reqs) != 2 || !strings.Contains(stdout, want) {
+			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 0 unconfirmed · 1 agent run, $0.00\n"; len(reqs) != 1 || !strings.Contains(stdout, want) {
 				t.Errorf("agent calls %d, want summary %q in:\n%s", len(reqs), want, stdout)
 			}
 		})
@@ -338,7 +362,7 @@ func TestReviewRunText(t *testing.T) {
 			t.Errorf("--yes printed %q:\n%s", hint, stdout)
 		}
 	}
-	if !strings.Contains(stdout, "Plan: 1 group, 2 agent runs") {
+	if !strings.Contains(stdout, "Plan: 1 group, 1 agent run,") {
 		t.Errorf("no plan:\n%s", stdout)
 	}
 }
@@ -439,7 +463,7 @@ func TestReviewRunGivesTheCallersAndCalleesOfChangedSymbols(t *testing.T) {
 	gitCmd(t, dir, "switch", "-q", "main")
 
 	var reqs []agent.Request
-	if code, _, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json"); code != 0 {
+	if code, _, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json", "--agent", "pi"); code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	want := "src/load.ts:3-5 load\n  called from: src/page.ts:3\n  calls: slug (src/util.ts:1)\n"

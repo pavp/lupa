@@ -129,7 +129,7 @@ func Plan(files []mapping.File, patches map[string]string, opts Options) Result 
 		r.Estimate.Tokens += (g.Bytes+overhead+3)/4 + ReadingTokens
 	}
 	if len(r.Groups) > 0 {
-		// One reviewer run per group, plus the filter run over the severe comments.
+		// One reviewer run per group, plus at least one investigator run.
 		r.Estimate.Runs = len(r.Groups) + 1
 	}
 	return r

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -51,12 +52,16 @@ func TestOrchestrateRunsOneSessionOverGroupFiles(t *testing.T) {
 			t.Errorf("prompt lacks %q", want)
 		}
 	}
-	for _, g := range in.Plan.Groups {
+	listed := regexp.MustCompile(`(?m)^- group (\d+): (\S+), paths for files_inspected: (\[.*\])$`).FindAllStringSubmatch(req.Prompt, -1)
+	if len(listed) != len(in.Plan.Groups) {
+		t.Fatalf("prompt lists %d groups, want %d", len(listed), len(in.Plan.Groups))
+	}
+	for i, g := range in.Plan.Groups {
 		patch, paths := groupPatch(g)
-		rel := filepath.Join(".lupa", "groups", "g"+strconv.Itoa(g.ID)+".txt")
+		rel := listed[i][2]
 		ps, _ := json.Marshal(paths)
-		if !strings.Contains(req.Prompt, "group "+strconv.Itoa(g.ID)+": "+rel+", paths for files_inspected: "+string(ps)) {
-			t.Errorf("prompt does not list group %d at %s with its paths", g.ID, rel)
+		if listed[i][1] != strconv.Itoa(g.ID) || listed[i][3] != string(ps) || !strings.HasPrefix(rel, ".lupa-groups-") {
+			t.Errorf("prompt lists group %q at %s with %s, want group %d in a fresh .lupa-groups- directory with %s", listed[i][1], rel, listed[i][3], g.ID, ps)
 		}
 		data, err := os.ReadFile(filepath.Join(in.Dir, rel))
 		if err != nil {
@@ -212,4 +217,19 @@ func claims(fs []Anchored) []string {
 		out = append(out, f.Finding.Comment.Claim)
 	}
 	return out
+}
+
+func TestOrchestrateNeverWritesThroughALinkTheChangeCommits(t *testing.T) {
+	victim := t.TempDir()
+	in, _ := orchestrateInput(t, func(agent.Request) (string, error) { return sessionAnswer(nil, nil), nil })
+	for _, name := range []string{".lupa", ".lupa-groups"} {
+		if err := os.Symlink(victim, filepath.Join(in.Dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	orchestrate(context.Background(), in, in.Agent)
+
+	if left, _ := os.ReadDir(victim); len(left) != 0 {
+		t.Errorf("wrote %d entries through a committed link into %s", len(left), victim)
+	}
 }
