@@ -351,7 +351,7 @@ func TestReviewJSONRedacts(t *testing.T) {
 	confirmed.Evidence = []review.Evidence{{File: "a.go", Line: 3, Quote: "token " + secret}}
 	out := review.RunOutput{
 		Findings:    []review.Anchored{confirmed},
-		Refuted:     []review.Investigated{{Finding: a, Evidence: []review.Evidence{{File: "a.go", Line: 2, Quote: "key " + secret}}}},
+		Refuted:     []review.Investigated{{Finding: a, Evidence: []review.Evidence{{File: "a.go", Line: 2, Quote: "key " + secret}}, Reason: "blocks: a call with " + secret}},
 		Unconfirmed: []review.Investigated{{Finding: a, Reason: "investigation failed: " + secret}},
 		Dropped:     []review.Drop{{Stage: review.StageAnchor, Comment: c, Reason: "relocation failed: " + secret}},
 		Ledger:      []review.Entry{{Path: "b.go", Status: review.NotReviewed, Reason: "agent run failed: " + secret}},
@@ -366,7 +366,7 @@ func TestReviewJSONRedacts(t *testing.T) {
 		t.Errorf("JSON not redacted: %s", s)
 	}
 	for _, want := range []string{`"evidence":[{"file":"a.go","line":3,"quote":"token ‹redacted›"}]`,
-		`"evidence":[{"file":"a.go","line":2,"quote":"key ‹redacted›"}]`, `"reason":"investigation failed: ‹redacted›"}]`} {
+		`"evidence":[{"file":"a.go","line":2,"quote":"key ‹redacted›"}],"reason":"blocks: a call with ‹redacted›"}`, `"reason":"investigation failed: ‹redacted›"}]`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("JSON lacks %s: %s", want, b)
 		}

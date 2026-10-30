@@ -443,7 +443,7 @@ func TestRunListsEveryRemovedComment(t *testing.T) {
 		},
 		relocate: `{"quote": ""}`,
 		investigate: func(string) string {
-			return `{"verdict": "refuted", "reasoning": "rate is imported", "evidence": [{"file": "lib/tax.ts", "line": 1, "quote": "import { rate } from \"./rate\";"}]}`
+			return `{"verdict": "refuted", "reasoning": "rate is imported", "blocks": "rate being undefined at the call", "evidence": [{"file": "lib/tax.ts", "line": 1, "quote": "import { rate } from \"./rate\";"}]}`
 		},
 	}
 	out := Run(context.Background(), f.input(runPlan(Options{})))
