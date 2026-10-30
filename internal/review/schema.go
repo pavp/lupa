@@ -20,6 +20,15 @@ const (
 		`"required":["file","line","quote"],"additionalProperties":false}}},` +
 		`"required":["verdict","reasoning","blocks","evidence"],"additionalProperties":false}`
 
+	orchestrateSchema = `{"type":"object","properties":{"groups":{"type":"array","items":{"type":"object","properties":{` +
+		`"id":{"type":"integer"},"files_inspected":{"type":"array","items":{"type":"string"}},` +
+		`"comments":{"type":"array","items":{"type":"object","properties":{` +
+		`"file":{"type":"string"},"severity":{"type":"string","enum":["severe","warning"]},` +
+		`"claim":{"type":"string"},"mechanism":{"type":"string"},"fix":{"type":"string"},` +
+		`"quote":{"type":"string"},"quote_settles":{"type":"boolean"},"validation":` + investigateSchema + `},` +
+		`"required":["file","severity","claim","mechanism","fix","quote","quote_settles"],"additionalProperties":false}}},` +
+		`"required":["id","files_inspected","comments"],"additionalProperties":false}}},"required":["groups"],"additionalProperties":false}`
+
 	claimsSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{` +
 		`"id":{"type":"integer"},"claim":{"type":"string"},` +
 		`"outcome":{"type":"string","enum":["supported","unsupported","not_judgeable"]},` +

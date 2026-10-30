@@ -285,6 +285,9 @@ func TestReviewPRChecksProseClaims(t *testing.T) {
 			return `{"results":[{"id":0,"claim":"Callers read the value faster","outcome":"not_judgeable"},` +
 				`{"id":1,"claim":"Sets ` + "`cfg.limit`" + `","outcome":"supported","file":"b.go","quote":"var B = 1"}]}`, nil
 		}
+		if req.Subagents {
+			return sessionReply(req.Prompt, ""), nil
+		}
 		m := groupPaths.FindStringSubmatch(req.Prompt)
 		return `{"files_inspected": ` + m[1] + `, "comments": []}`, nil
 	}}

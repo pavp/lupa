@@ -30,6 +30,8 @@ type Anchored struct {
 	Finding   verify.Finding
 	Relocated bool
 	Evidence  []Evidence
+	// validation is the orchestrated session's verdict on the comment, nil when it gave none.
+	validation *verdictReply
 }
 
 // DroppedComment is a comment that could not be anchored, with the reason for the report.
