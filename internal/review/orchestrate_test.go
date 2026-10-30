@@ -140,3 +140,76 @@ func TestOrchestrateRetriesOnceAndReportsWhatItCouldNotReview(t *testing.T) {
 		})
 	}
 }
+
+func TestRunOrchestratedDecidesEachCandidateWithTheInvestigatorsRules(t *testing.T) {
+	refuted := comment("src/cart.ts", "severe", "qty may be zero", countQuote, false)
+	refuted["validation"] = map[string]any{"verdict": VerdictRefuted, "reasoning": "items are validated", "blocks": "a zero qty reaching the sum",
+		"evidence": []Evidence{{File: "src/cart.ts", Line: 10, Quote: "  let sum = 0;"}}}
+	confirmed := comment("src/cart.ts", "severe", "qty may be undefined", cartQuote, false)
+	confirmed["validation"] = map[string]any{"verdict": VerdictConfirmed, "reasoning": "qty is optional", "blocks": "",
+		"evidence": []Evidence{{File: "src/cart.ts", Line: 11, Quote: cartQuote}}}
+	groups := map[int][]map[string]any{
+		1: {
+			comment("lib/tax.ts", "severe", "rate import is stale", `import { rate } from "./rate";`, true),
+			comment("lib/tax.ts", "severe", "rate may be undefined", taxQuote, false),
+			comment("lib/tax.ts", "severe", "invented code", "  return 0;", false),
+		},
+		2: {confirmed, refuted},
+	}
+	var systems []string
+	fake := &agent.Fake{Reply: func(req agent.Request) (string, error) {
+		systems = append(systems, req.SystemPrompt)
+		if req.SystemPrompt == relocateSystem {
+			return `{"quote": ""}`, nil
+		}
+		return sessionAnswer(groups, map[int][]string{1: {"lib/tax.ts"}, 2: {"src/cart.ts"}}), nil
+	}}
+	in := (&fakeRun{}).input(runPlan(Options{Budget: 2000}))
+	in.Agent, in.Dir, in.Orchestrate = billed{fake}, t.TempDir(), true
+	out := Run(context.Background(), in)
+
+	if len(systems) != 2 || systems[0] != orchestrateSystem || systems[1] != relocateSystem || out.Usage.Calls != 2 {
+		t.Fatalf("agent runs = %d (usage %d), want the session and one relocation, no investigator", len(systems), out.Usage.Calls)
+	}
+	if got := strings.Join(claims(out.Findings), ","); got != "rate import is stale,qty may be undefined" {
+		t.Errorf("findings = %q, want the pre-existing follow-up and the confirmed candidate", got)
+	}
+	if ev := out.Findings[1].Evidence; len(ev) != 1 || ev[0].Line != 11 {
+		t.Errorf("confirmed evidence = %+v, want the located quote at line 11", ev)
+	}
+	if len(out.Refuted) != 1 || out.Refuted[0].Reason != "blocks: a zero qty reaching the sum — items are validated" {
+		t.Errorf("refuted = %+v, want qty may be zero with its blocked step", out.Refuted)
+	}
+	if len(out.Unconfirmed) != 1 || out.Unconfirmed[0].Finding.Finding.Comment.Claim != "rate may be undefined" || out.Unconfirmed[0].Reason != reasonNotValidated {
+		t.Errorf("unconfirmed = %+v, want the candidate the session did not validate", out.Unconfirmed)
+	}
+	if len(out.Dropped) != 1 || out.Dropped[0].Stage != StageAnchor || out.Dropped[0].Comment.Claim != "invented code" || out.Dropped[0].Group != 1 {
+		t.Errorf("dropped = %+v, want the comment whose quote is not in the change", out.Dropped)
+	}
+	for _, e := range out.Ledger {
+		if e.Path != "gen/api.pb.ts" && e.Status != Reviewed {
+			t.Errorf("ledger %+v, want every planned file reviewed", e)
+		}
+	}
+}
+
+func TestRunOrchestratedMarksGroupsItCouldNotReview(t *testing.T) {
+	fake := &agent.Fake{Reply: func(agent.Request) (string, error) { return "", errors.New("exit status 1") }}
+	in := (&fakeRun{}).input(runPlan(Options{Budget: 2000}))
+	in.Agent, in.Dir, in.Orchestrate = fake, t.TempDir(), true
+	out := Run(context.Background(), in)
+
+	for _, p := range []string{"lib/tax.ts", "src/cart.ts"} {
+		if e := ledgerEntry(t, out.Ledger, p); e.Status != NotReviewed || e.Reason != "agent run failed: exit status 1" {
+			t.Errorf("%s = %+v, want not reviewed with the run's error", p, e)
+		}
+	}
+}
+
+func claims(fs []Anchored) []string {
+	var out []string
+	for _, f := range fs {
+		out = append(out, f.Finding.Comment.Claim)
+	}
+	return out
+}
