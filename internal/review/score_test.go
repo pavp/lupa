@@ -38,8 +38,9 @@ func scoreInput(reply string, err error, reqs *[]agent.Request) ScoreInput {
 func TestScoreSplitsFindingsAtTheThreshold(t *testing.T) {
 	var reqs []agent.Request
 	res := Score(context.Background(), scoreInput(`{"results":[{"id":0,"score":8,"reason":"sum of nothing"},{"id":1,"score":0,"reason":"a docstring"}]}`, nil, &reqs))
-	if len(res.Kept) != 1 || res.Kept[0].Finding.Comment.Claim != "total is NaN for an empty cart" {
-		t.Errorf("kept = %+v, want the defect only", res.Kept)
+	if len(res.Kept) != 1 || res.Kept[0].Finding.Comment.Claim != "total is NaN for an empty cart" || res.Kept[0].Score == nil ||
+		*res.Kept[0].Score != 8 || res.Kept[0].ScoreReason != "sum of nothing" {
+		t.Errorf("kept = %+v, want the defect only, with score 8 and its reason", res.Kept)
 	}
 	if len(res.Low) != 1 || res.Low[0].Score != 0 || res.Low[0].Reason != "a docstring" || res.Low[0].Finding.Finding.Comment.Claim != "add a docstring" {
 		t.Errorf("low = %+v, want the docstring with score 0 and its reason", res.Low)
@@ -85,8 +86,8 @@ func TestScoreKeepsEveryFindingWhenItCannotScore(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			var reqs []agent.Request
 			res := Score(context.Background(), scoreInput(c.reply, c.err, &reqs))
-			if len(res.Kept) != 2 || len(res.Low) != 0 || !strings.Contains(res.Note, c.note) {
-				t.Errorf("kept %d, low %d, note %q; want both kept and %q", len(res.Kept), len(res.Low), res.Note, c.note)
+			if len(res.Kept) != 2 || len(res.Low) != 0 || !strings.Contains(res.Note, c.note) || res.Kept[0].Score != nil || res.Kept[1].Score != nil {
+				t.Errorf("kept %+v, low %d, note %q; want both kept unscored and %q", res.Kept, len(res.Low), res.Note, c.note)
 			}
 		})
 	}
@@ -95,8 +96,8 @@ func TestScoreKeepsEveryFindingWhenItCannotScore(t *testing.T) {
 func TestScoreKeepsAFindingItGotNoValidScoreFor(t *testing.T) {
 	var reqs []agent.Request
 	res := Score(context.Background(), scoreInput(`{"results":[{"id":0,"score":12,"reason":"x"},{"id":9,"score":1,"reason":"z"}]}`, nil, &reqs))
-	if len(res.Kept) != 2 || len(res.Low) != 0 {
-		t.Errorf("kept %d, low %d; want both kept: id 0 has no valid score, id 1 none at all", len(res.Kept), len(res.Low))
+	if len(res.Kept) != 2 || len(res.Low) != 0 || res.Kept[0].Score != nil || res.Kept[1].Score != nil {
+		t.Errorf("kept %+v, low %d; want both kept unscored: id 0 has no valid score, id 1 none at all", res.Kept, len(res.Low))
 	}
 	for _, want := range []string{"id 0: score 12 out of range", "id 9: unknown", "id 1: no score, kept"} {
 		if !strings.Contains(strings.Join(res.Notes, "\n"), want) {

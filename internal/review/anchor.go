@@ -24,10 +24,13 @@ type AnchorInput struct {
 	Head     func(path string) (string, bool)
 }
 
-// Anchored is a located finding; Relocated marks one whose quote came from the relocation retry.
+// Anchored is a located finding; Relocated marks one whose quote came from the relocation retry. Score and
+// ScoreReason are the scorer's verdict on a kept finding, Score nil when it was not scored.
 type Anchored struct {
-	Finding   verify.Finding
-	Relocated bool
+	Finding     verify.Finding
+	Relocated   bool
+	Score       *int
+	ScoreReason string
 }
 
 // DroppedComment is a comment that could not be anchored, with the reason for the report.

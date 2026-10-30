@@ -235,6 +235,8 @@ type findingJSON struct {
 	Quote     string `json:"quote"`
 	Relocated bool   `json:"relocated"`
 	Merged    int    `json:"merged"`
+	Score     *int   `json:"score,omitempty"`
+	Reason    string `json:"score_reason,omitempty"`
 }
 
 type lowJSON struct {
@@ -290,7 +292,7 @@ func findingJSONOf(a review.Anchored) findingJSON {
 	f, c := a.Finding, a.Finding.Comment
 	return findingJSON{File: f.Location.File, Side: f.Location.Side, Start: f.Location.Start, End: f.Location.End, Severity: c.Severity,
 		Level: f.Level, Causality: f.Causality, Claim: report.Redact(c.Claim), Mechanism: report.Redact(c.Mechanism), Fix: report.Redact(c.Fix),
-		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged}
+		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged, Score: a.Score, Reason: report.Redact(a.ScoreReason)}
 }
 
 func runReview(args []string, env Env) error {
