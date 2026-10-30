@@ -3,6 +3,7 @@ package claude
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,8 @@ const waitDelay = time.Second
 type Adapter struct {
 	// Bin is the executable to run; empty means "claude" on PATH.
 	Bin string
+	// Model is used when a request names none; empty keeps the CLI's default.
+	Model string
 }
 
 type envelope struct {
@@ -69,8 +72,8 @@ func (a Adapter) Run(ctx context.Context, req agent.Request) (agent.Response, er
 		"--safe-mode",
 		"--system-prompt", req.SystemPrompt,
 	}
-	if req.Model != "" {
-		args = append(args, "--model", req.Model)
+	if model := cmp.Or(req.Model, a.Model); model != "" {
+		args = append(args, "--model", model)
 	}
 	if req.Schema != "" {
 		args = append(args, "--json-schema", req.Schema)

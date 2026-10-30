@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
 	"testing"
 
 	"github.com/pavp/lupa/internal/agent"
+	"github.com/pavp/lupa/internal/agent/claude"
+	"github.com/pavp/lupa/internal/agent/pi"
 	"github.com/pavp/lupa/internal/review"
 	"github.com/pavp/lupa/internal/verify"
 )
@@ -119,6 +122,7 @@ func TestReviewErrors(t *testing.T) {
 	}{
 		{"unknown agent", []string{"review", "feature", "--yes", "--agent", "other"}, "unknown agent \"other\""},
 		{"agent without a name", []string{"review", "feature", "--yes", "--agent"}, "flag \"--agent\" needs a value"},
+		{"pi extensions for another agent", []string{"review", "feature", "--yes", "--pi-extensions", "/ext"}, "--pi-extensions needs --agent pi"},
 		{"unknown flag", []string{"review", "feature", "--plan", "--bogus"}, "unknown flag \"--bogus\""},
 		{"missing target", []string{"review", "--plan"}, "missing target"},
 	}
@@ -365,5 +369,39 @@ func TestReviewRunExitsOneWhenNoGroupIsReviewed(t *testing.T) {
 	var got reviewOut
 	if err := json.Unmarshal([]byte(stdout), &got); err != nil || !strings.Contains(stdout, `"status": "not-reviewed"`) {
 		t.Errorf("stdout is not the saved review with not-reviewed entries: %v\n%s", err, stdout)
+	}
+}
+
+func TestAgentOf(t *testing.T) {
+	cases := []struct {
+		name, agentName, model, extensions string
+		want                               agent.Agent
+	}{
+		{"claude by default model", "claude", "", "", claude.Adapter{}},
+		{"claude with a model", "claude", "opus", "", claude.Adapter{Model: "opus"}},
+		{"pi with a model and its provider", "pi", "prov/flash", "/ext/provider, /ext/other", pi.Adapter{Model: "prov/flash", Extensions: []string{"/ext/provider", "/ext/other"}}},
+		{"pi with no extensions", "pi", "", "", pi.Adapter{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := agentOf(c.agentName, c.model, c.extensions)
+			if err != nil || !reflect.DeepEqual(got, c.want) {
+				t.Errorf("agentOf = %#v, %v; want %#v", got, err, c.want)
+			}
+		})
+	}
+	if _, err := agentOf("other", "", ""); err == nil || !strings.Contains(err.Error(), `unknown agent "other"`) {
+		t.Errorf("err = %v, want unknown agent", err)
+	}
+}
+
+func TestReviewPlanTextKeepsTheAgentFlags(t *testing.T) {
+	dir, _, _ := newReviewRepo(t)
+	code, stdout, stderr := lupa(dir, "review", "feature", "--plan", "--agent", "pi", "--model", "prov/flash", "--pi-extensions", "/ext/my provider")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if want := "Then run the agent review: lupa review feature --yes --agent pi --model prov/flash --pi-extensions '/ext/my provider'"; !strings.Contains(stdout, want) {
+		t.Errorf("plan lacks %q:\n%s", want, stdout)
 	}
 }
