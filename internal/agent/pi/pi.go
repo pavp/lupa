@@ -68,12 +68,13 @@ func (a Adapter) Run(ctx context.Context, req agent.Request) (agent.Response, er
 	defer cancel()
 
 	// The tool allowlist is the isolation boundary: never add bash, edit or write. User extensions can
-	// autoformat, autofix and inject context, so only the ones named here load.
+	// autoformat, autofix and inject context, so only the ones named here load. Pi appends the user's and a
+	// trusted project's APPEND_SYSTEM.md despite every --no-* flag; an empty append and --no-approve stop both.
 	args := []string{
 		"-p", "--mode", "json",
-		"--no-extensions", "--no-skills", "--no-context-files", "--no-prompt-templates", "--no-session", "--no-mcp",
+		"--no-extensions", "--no-skills", "--no-context-files", "--no-prompt-templates", "--no-session", "--no-mcp", "--no-approve",
 		"--tools", "read,grep,find,ls",
-		"--system-prompt", req.SystemPrompt,
+		"--system-prompt", req.SystemPrompt, "--append-system-prompt", "",
 	}
 	for _, e := range a.Extensions {
 		args = append(args, "-e", e)

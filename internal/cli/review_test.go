@@ -394,3 +394,14 @@ func TestAgentOf(t *testing.T) {
 		t.Errorf("err = %v, want unknown agent", err)
 	}
 }
+
+func TestReviewPlanTextKeepsTheAgentFlags(t *testing.T) {
+	dir, _, _ := newReviewRepo(t)
+	code, stdout, stderr := lupa(dir, "review", "feature", "--plan", "--agent", "pi", "--model", "prov/flash", "--pi-extensions", "/ext/my provider")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if want := "Then run the agent review: lupa review feature --yes --agent pi --model prov/flash --pi-extensions '/ext/my provider'"; !strings.Contains(stdout, want) {
+		t.Errorf("plan lacks %q:\n%s", want, stdout)
+	}
+}

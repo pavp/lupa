@@ -164,7 +164,7 @@ Dependency rules:
 | Read-only tools | `--tools Read,Grep,Glob` | `--tools read,grep,find,ls` |
 | Model | `--model` | `--model provider/id`, `--thinking` |
 | Ephemeral | `--no-session-persistence` | `--no-session` |
-| Isolate from user context | `--setting-sources ""` (also keeps the reviewed repo's `CLAUDE.md` out, verified), `--safe-mode`, `--strict-mcp-config`, a replacing `--system-prompt`, prompt on stdin | `--no-context-files`, `--no-extensions` plus only the named ones (`-e`), `--no-skills`, `--no-prompt-templates`, `--no-mcp`, `--no-session`, a replacing `--system-prompt`, prompt on stdin |
+| Isolate from user context | `--setting-sources ""` (also keeps the reviewed repo's `CLAUDE.md` out, verified), `--safe-mode`, `--strict-mcp-config`, a replacing `--system-prompt`, prompt on stdin | `--no-context-files`, `--no-extensions` plus only the named ones (`-e`), `--no-skills`, `--no-prompt-templates`, `--no-mcp`, `--no-session`, `--no-approve`, a replacing `--system-prompt` with an empty `--append-system-prompt`, prompt on stdin |
 
 Never run a reviewer with a permission-bypass mode; the tool allowlist is the boundary. The reviewed tree is a detached worktree at the PR head, never the user's working copy. Each run has a time limit and the prompt a byte budget, so cost is predictable.
 
@@ -175,6 +175,7 @@ Gotchas found while testing:
 - `claude --bare` requires an API key; it fails on a subscription login.
 - Pi user extensions can autoformat, autofix and inject context; a read-only reviewer must run with `--no-extensions`. A provider can itself be an extension, so Lupa loads only the extensions the user names (`--pi-extensions`).
 - With the prompt as an argument and stdin open, `pi -p` waits on stdin; Lupa sends the prompt on stdin.
+- Pi appends the user's `APPEND_SYSTEM.md` and a trusted project's `.pi/APPEND_SYSTEM.md` to the system prompt despite `--system-prompt` and every `--no-*` flag; an empty `--append-system-prompt` and `--no-approve` keep both out (verified with Pi 1.4.0).
 - A provider error still exits 0: the last assistant `message_end` carries `stopReason: "error"` and `errorMessage`. A system message's `content` is a string, an assistant's a list of parts.
 - `pi auth check --no-refresh` reported `not_ready` for every provider while real calls worked; test readiness with a minimal call.
 - Pi tool calls arrive as `toolCall` items inside assistant `message_end` events.
