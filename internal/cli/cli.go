@@ -199,16 +199,17 @@ type planJSON struct {
 
 // reviewJSON is the shape of `lupa review --json` and of the saved review.json.
 type reviewJSON struct {
-	Schema   string         `json:"schema"`
-	Base     string         `json:"base"`
-	Head     string         `json:"head"`
-	Findings []findingJSON  `json:"findings"`
-	Refuted  []refutedJSON  `json:"refuted"`
-	Dropped  []droppedJSON  `json:"dropped"`
-	Ledger   []review.Entry `json:"ledger"`
-	Usage    usageJSON      `json:"usage"`
-	Notes    []string       `json:"notes"`
-	Claims   []claimJSON    `json:"claims"`
+	Schema      string            `json:"schema"`
+	Base        string            `json:"base"`
+	Head        string            `json:"head"`
+	Findings    []findingJSON     `json:"findings"`
+	Refuted     []refutedJSON     `json:"refuted"`
+	Unconfirmed []unconfirmedJSON `json:"unconfirmed"`
+	Dropped     []droppedJSON     `json:"dropped"`
+	Ledger      []review.Entry    `json:"ledger"`
+	Usage       usageJSON         `json:"usage"`
+	Notes       []string          `json:"notes"`
+	Claims      []claimJSON       `json:"claims"`
 }
 
 type claimJSON struct {
@@ -222,24 +223,30 @@ type claimJSON struct {
 }
 
 type findingJSON struct {
-	File      string `json:"file"`
-	Side      string `json:"side"`
-	Start     int    `json:"start"`
-	End       int    `json:"end"`
-	Severity  string `json:"severity"`
-	Level     string `json:"level"`
-	Causality string `json:"causality"`
-	Claim     string `json:"claim"`
-	Mechanism string `json:"mechanism"`
-	Fix       string `json:"fix"`
-	Quote     string `json:"quote"`
-	Relocated bool   `json:"relocated"`
-	Merged    int    `json:"merged"`
+	File      string            `json:"file"`
+	Side      string            `json:"side"`
+	Start     int               `json:"start"`
+	End       int               `json:"end"`
+	Severity  string            `json:"severity"`
+	Level     string            `json:"level"`
+	Causality string            `json:"causality"`
+	Claim     string            `json:"claim"`
+	Mechanism string            `json:"mechanism"`
+	Fix       string            `json:"fix"`
+	Quote     string            `json:"quote"`
+	Relocated bool              `json:"relocated"`
+	Merged    int               `json:"merged"`
+	Evidence  []review.Evidence `json:"evidence,omitempty"`
 }
 
 type refutedJSON struct {
-	Finding  findingJSON     `json:"finding"`
-	Citation review.Citation `json:"citation"`
+	Finding  findingJSON       `json:"finding"`
+	Evidence []review.Evidence `json:"evidence"`
+}
+
+type unconfirmedJSON struct {
+	Finding findingJSON `json:"finding"`
+	Reason  string      `json:"reason"`
 }
 
 type droppedJSON struct {
@@ -260,7 +267,7 @@ type usageJSON struct {
 
 func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 	r := reviewJSON{Schema: "lupa.review/v0", Base: base, Head: head, Findings: []findingJSON{}, Refuted: []refutedJSON{},
-		Dropped: []droppedJSON{}, Ledger: []review.Entry{}, Usage: usageJSON(out.Usage), Notes: []string{}}
+		Unconfirmed: []unconfirmedJSON{}, Dropped: []droppedJSON{}, Ledger: []review.Entry{}, Usage: usageJSON(out.Usage), Notes: []string{}}
 	for _, e := range out.Ledger {
 		e.Reason = report.Redact(e.Reason)
 		r.Ledger = append(r.Ledger, e)
@@ -276,9 +283,10 @@ func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 			File: c.File, Side: c.Side, Line: c.Line, Code: report.Redact(c.Code)})
 	}
 	for _, f := range out.Refuted {
-		citation := f.Citation
-		citation.Quote = report.Redact(citation.Quote)
-		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Citation: citation})
+		r.Refuted = append(r.Refuted, refutedJSON{Finding: findingJSONOf(f.Finding), Evidence: evidenceJSON(f.Evidence)})
+	}
+	for _, f := range out.Unconfirmed {
+		r.Unconfirmed = append(r.Unconfirmed, unconfirmedJSON{Finding: findingJSONOf(f.Finding), Reason: report.Redact(f.Reason)})
 	}
 	for _, d := range out.Dropped {
 		r.Dropped = append(r.Dropped, droppedJSON{Stage: d.Stage, Group: d.Group, Reason: report.Redact(d.Reason), File: d.Comment.File,
@@ -291,7 +299,16 @@ func findingJSONOf(a review.Anchored) findingJSON {
 	f, c := a.Finding, a.Finding.Comment
 	return findingJSON{File: f.Location.File, Side: f.Location.Side, Start: f.Location.Start, End: f.Location.End, Severity: c.Severity,
 		Level: f.Level, Causality: f.Causality, Claim: report.Redact(c.Claim), Mechanism: report.Redact(c.Mechanism), Fix: report.Redact(c.Fix),
-		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged}
+		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged, Evidence: evidenceJSON(a.Evidence)}
+}
+
+func evidenceJSON(es []review.Evidence) []review.Evidence {
+	var out []review.Evidence
+	for _, e := range es {
+		e.Quote = report.Redact(e.Quote)
+		out = append(out, e)
+	}
+	return out
 }
 
 func runReview(args []string, env Env) error {

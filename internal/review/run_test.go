@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -81,14 +83,36 @@ func (b billed) Run(ctx context.Context, req agent.Request) (agent.Response, err
 	return resp, err
 }
 
-// fakeRun routes each request by its system prompt: reviewer, relocation or refuter.
+// fakeRun routes each request by its system prompt: reviewer, relocation, investigator or claims.
+// With no investigate reply, an investigator confirms its candidate by quoting the candidate's first line.
 type fakeRun struct {
-	review   func(prompt string) (string, error)
-	relocate string
-	refute   string
-	claims   string
-	mu       sync.Mutex
-	reqs     []agent.Request
+	review      func(prompt string) (string, error)
+	relocate    string
+	investigate func(prompt string) string
+	claims      string
+	mu          sync.Mutex
+	reqs        []agent.Request
+}
+
+var candidateAt = regexp.MustCompile(`File: (\S+)\nLines: (\d+)-`)
+
+func runHead(path string) (string, bool) {
+	switch path {
+	case "lib/tax.ts":
+		return runTaxHead, true
+	case "src/cart.ts":
+		return runCartHead(), true
+	}
+	return "", false
+}
+
+func confirmCandidate(prompt string) string {
+	m := candidateAt.FindStringSubmatch(prompt)
+	line, _ := strconv.Atoi(m[2])
+	head, _ := runHead(m[1])
+	b, _ := json.Marshal(map[string]any{"verdict": "confirmed", "reasoning": "reached",
+		"evidence": []Evidence{{File: m[1], Line: line, Quote: strings.Split(head, "\n")[line-1]}}})
+	return string(b)
 }
 
 func (f *fakeRun) input(plan Result) RunInput {
@@ -99,8 +123,11 @@ func (f *fakeRun) input(plan Result) RunInput {
 		switch req.SystemPrompt {
 		case relocateSystem:
 			return f.relocate, nil
-		case filterSystem:
-			return f.refute, nil
+		case investigateSystem:
+			if f.investigate == nil {
+				return confirmCandidate(req.Prompt), nil
+			}
+			return f.investigate(req.Prompt), nil
 		case claimsSystem:
 			return f.claims, nil
 		}
@@ -114,15 +141,7 @@ func (f *fakeRun) input(plan Result) RunInput {
 		Agent:       billed{fake},
 		Dir:         "/tmp/worktree",
 		Timeout:     2 * time.Minute,
-		Head: func(path string) (string, bool) {
-			switch path {
-			case "lib/tax.ts":
-				return runTaxHead, true
-			case "src/cart.ts":
-				return runCartHead(), true
-			}
-			return "", false
-		},
+		Head:        runHead,
 	}
 }
 
@@ -165,7 +184,7 @@ func ledgerEntry(t *testing.T, ledger []Entry, path string) Entry {
 	return ledger[i]
 }
 
-func TestRunReviewsEveryGroupAndFiltersOnce(t *testing.T) {
+func TestRunReviewsEveryGroupAndInvestigatesEachFinding(t *testing.T) {
 	plan := runPlan(Options{})
 	f := &fakeRun{
 		review: func(prompt string) (string, error) {
@@ -174,7 +193,6 @@ func TestRunReviewsEveryGroupAndFiltersOnce(t *testing.T) {
 			}
 			return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "severe", "qty may be undefined", cartQuote, false)), nil
 		},
-		refute: `{"results": [{"id": 0, "outcome": "corroborated"}]}`,
 	}
 	out := Run(context.Background(), f.input(plan))
 
@@ -184,12 +202,11 @@ func TestRunReviewsEveryGroupAndFiltersOnce(t *testing.T) {
 	if loc := out.Findings[1].Finding.Location; loc.Start != 11 || loc.End != 11 || loc.Side != "new" {
 		t.Errorf("cart finding located at %+v, want new side line 11", loc)
 	}
-	if f.count(systemPrompt) != 2 || f.count(filterSystem) != 1 {
-		t.Fatalf("reviewer calls = %d, refuter calls = %d, want 2 and 1", f.count(systemPrompt), f.count(filterSystem))
+	if f.count(systemPrompt) != 2 || f.count(investigateSystem) != 2 {
+		t.Fatalf("reviewer calls = %d, investigator calls = %d, want 2 and 2", f.count(systemPrompt), f.count(investigateSystem))
 	}
-	refuter := f.reqs[slices.IndexFunc(f.reqs, func(r agent.Request) bool { return r.SystemPrompt == filterSystem })].Prompt
-	if !strings.Contains(refuter, "ID: 0\n") || !strings.Contains(refuter, "ID: 1\n") {
-		t.Errorf("the one refuter run does not carry both findings:\n%s", refuter)
+	if want := []Evidence{{File: "src/cart.ts", Line: 11, Quote: cartQuote}}; !reflect.DeepEqual(out.Findings[1].Evidence, want) {
+		t.Errorf("cart evidence = %+v, want %+v", out.Findings[1].Evidence, want)
 	}
 	want := BuildPrompt(PromptInput{Patch: runTaxPatch, Paths: []string{"lib/tax.ts"},
 		Importers: map[string][]string{"lib/tax.ts": {"src/order.ts"}}, Conventions: []Convention{{Path: "AGENTS.md", Content: "Use tabs."}}})
@@ -197,17 +214,41 @@ func TestRunReviewsEveryGroupAndFiltersOnce(t *testing.T) {
 	if first.SystemPrompt != want.System || first.Prompt != want.User || first.Dir != "/tmp/worktree" || first.Timeout != 2*time.Minute || first.Schema != reviewSchema {
 		t.Errorf("first reviewer request = %+v, want the BuildPrompt of group 1 in the worktree with the timeout", first)
 	}
-	if wantUsage := (Usage{Calls: 3, CostUSD: 1.5, InputTokens: 300, OutputTokens: 30}); out.Usage != wantUsage {
+	if wantUsage := (Usage{Calls: 4, CostUSD: 2, InputTokens: 400, OutputTokens: 40}); out.Usage != wantUsage {
 		t.Errorf("usage = %+v, want %+v", out.Usage, wantUsage)
 	}
 	if !reflect.DeepEqual(out.Ledger, plan.Ledger) {
 		t.Errorf("ledger = %+v, want the plan's %+v", out.Ledger, plan.Ledger)
 	}
-	if !slices.Contains(out.Notes, "id 1: no result, kept as inconclusive") {
-		t.Errorf("notes = %v, want the filter's note on id 1", out.Notes)
+	if len(out.Dropped) != 0 || len(out.Refuted) != 0 || len(out.Unconfirmed) != 0 {
+		t.Errorf("dropped = %v, refuted = %v, unconfirmed = %v, want none", out.Dropped, out.Refuted, out.Unconfirmed)
 	}
-	if len(out.Dropped) != 0 || len(out.Refuted) != 0 {
-		t.Errorf("dropped = %v, refuted = %v, want none", out.Dropped, out.Refuted)
+}
+
+func TestRunListsUnconfirmedFindingsAndDoesNotInvestigateFollowUps(t *testing.T) {
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "severe", "rate import is stale", `import { rate } from "./rate";`, true)), nil
+			}
+			return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "severe", "qty may be undefined", cartQuote, false)), nil
+		},
+		investigate: func(string) string { return `{"verdict": "unproven", "reasoning": "no caller found", "evidence": []}` },
+	}
+	out := Run(context.Background(), f.input(runPlan(Options{})))
+
+	if len(out.Findings) != 1 || out.Findings[0].Finding.Level != verify.LevelFollowUp || out.Findings[0].Evidence != nil {
+		t.Fatalf("findings = %+v, want only the pre-existing follow-up, without evidence", out.Findings)
+	}
+	if f.count(investigateSystem) != 1 {
+		t.Errorf("investigator calls = %d, want 1: the follow-up is not investigated", f.count(investigateSystem))
+	}
+	if len(out.Unconfirmed) != 1 || out.Unconfirmed[0].Finding.Finding.Comment.Claim != "qty may be undefined" ||
+		out.Unconfirmed[0].Reason != "unproven: no caller found" {
+		t.Errorf("unconfirmed = %+v, want the cart finding with its reason", out.Unconfirmed)
+	}
+	if out.Usage.Calls != 3 {
+		t.Errorf("usage calls = %d, want 2 reviewers and 1 investigator", out.Usage.Calls)
 	}
 }
 
@@ -246,7 +287,7 @@ func TestRunMarksAFailedGroupNotReviewedAndGoesOn(t *testing.T) {
 			if got := paths(out.Findings); !reflect.DeepEqual(got, []string{"src/cart.ts"}) {
 				t.Errorf("findings = %v, want the cart finding of group 2", got)
 			}
-			// Two reviewers and one refuter for the blocking cart finding; an unusable answer adds its retry.
+			// Two reviewers and one investigator for the cart finding; an unusable answer adds its retry.
 			calls := 3
 			if tt.name == "unusable reply" {
 				calls = 4
@@ -295,8 +336,8 @@ func TestRunReviewsGroupsInParallelAndKeepsGroupOrder(t *testing.T) {
 	if want := []string{"rate may be undefined", "qty may be undefined", "qty may be zero"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("findings = %v, want group order %v", got, want)
 	}
-	if !reflect.DeepEqual(out.Ledger, plan.Ledger) || out.Usage.Calls != 3 {
-		t.Errorf("ledger = %+v, calls = %d, want the plan's ledger and 3 calls", out.Ledger, out.Usage.Calls)
+	if !reflect.DeepEqual(out.Ledger, plan.Ledger) || out.Usage.Calls != 6 {
+		t.Errorf("ledger = %+v, calls = %d, want the plan's ledger and 6 calls: 3 reviewers, 3 investigators", out.Ledger, out.Usage.Calls)
 	}
 }
 
@@ -311,7 +352,6 @@ func TestRunRecomputesTheCausalityOfAMergedFinding(t *testing.T) {
 			}
 			return answer([]string{"src/cart.ts"}), nil
 		},
-		refute: `{"results": []}`,
 	}
 	out := Run(context.Background(), f.input(plan))
 
@@ -358,8 +398,8 @@ func TestRunRetriesAnUnusableAnswerOnce(t *testing.T) {
 	if got := paths(out.Findings); !reflect.DeepEqual(got, []string{"lib/tax.ts"}) {
 		t.Errorf("findings = %v, want the retried answer's finding", got)
 	}
-	if out.Usage.Calls != 3 {
-		t.Errorf("usage calls = %d, want 3", out.Usage.Calls)
+	if out.Usage.Calls != 4 {
+		t.Errorf("usage calls = %d, want 4: 3 reviewers and 1 investigator", out.Usage.Calls)
 	}
 }
 
@@ -373,18 +413,17 @@ func TestRunAsksEveryRunForItsAnswerSchema(t *testing.T) {
 			return answer([]string{"src/cart.ts"}), nil
 		},
 		relocate: `{"quote": "  return amount * rate;"}`,
-		refute:   `{"results": [{"id": 0, "outcome": "corroborated"}]}`,
 	}
 	Run(context.Background(), f.input(plan))
 
-	want := map[string]string{systemPrompt: reviewSchema, relocateSystem: relocateSchema, filterSystem: filterSchema}
+	want := map[string]string{systemPrompt: reviewSchema, relocateSystem: relocateSchema, investigateSystem: investigateSchema}
 	for _, r := range f.reqs {
 		if !json.Valid([]byte(r.Schema)) || r.Schema != want[r.SystemPrompt] {
 			t.Errorf("request with system prompt %.40q has schema %q, want its answer schema", r.SystemPrompt, r.Schema)
 		}
 	}
 	if len(f.reqs) != 4 {
-		t.Errorf("requests = %d, want 2 reviewers, 1 relocation and 1 refuter", len(f.reqs))
+		t.Errorf("requests = %d, want 2 reviewers, 1 relocation and 1 investigator", len(f.reqs))
 	}
 }
 
@@ -399,7 +438,9 @@ func TestRunListsEveryRemovedComment(t *testing.T) {
 			return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "severe", "qty may be undefined", "  return qty ?? 0;", true)), nil
 		},
 		relocate: `{"quote": ""}`,
-		refute:   `{"results": [{"id": 0, "outcome": "refuted", "citation": {"file": "lib/tax.ts", "line": 1, "quote": "import { rate } from \"./rate\";"}}]}`,
+		investigate: func(string) string {
+			return `{"verdict": "refuted", "reasoning": "rate is imported", "evidence": [{"file": "lib/tax.ts", "line": 1, "quote": "import { rate } from \"./rate\";"}]}`
+		},
 	}
 	out := Run(context.Background(), f.input(runPlan(Options{})))
 
@@ -413,14 +454,14 @@ func TestRunListsEveryRemovedComment(t *testing.T) {
 	if anchor.Stage != StageAnchor || anchor.Reason != reasonNotFound || anchor.Comment.Claim != "qty may be undefined" {
 		t.Errorf("anchor drop = %+v", anchor)
 	}
-	if len(out.Refuted) != 1 || out.Refuted[0].Citation.Line != 1 || out.Refuted[0].Finding.Finding.Comment.Claim != "rate may be negative" {
-		t.Fatalf("refuted = %+v, want the tax finding with its citation", out.Refuted)
+	if len(out.Refuted) != 1 || out.Refuted[0].Evidence[0].Line != 1 || out.Refuted[0].Finding.Finding.Comment.Claim != "rate may be negative" {
+		t.Fatalf("refuted = %+v, want the tax finding with its evidence", out.Refuted)
 	}
 	if len(out.Findings) != 0 {
 		t.Errorf("findings = %+v, want none", out.Findings)
 	}
 	if want := (Usage{Calls: 4, CostUSD: 2, InputTokens: 400, OutputTokens: 40}); out.Usage != want {
-		t.Errorf("usage = %+v, want %+v over two reviewers, one relocation and one refuter", out.Usage, want)
+		t.Errorf("usage = %+v, want %+v over two reviewers, one relocation and one investigator", out.Usage, want)
 	}
 }
 
@@ -450,8 +491,8 @@ func TestRunMergesDuplicatesAcrossGroups(t *testing.T) {
 	if got.Finding.Merged != 1 || got.Finding.Level != verify.LevelBlocking || !got.Relocated {
 		t.Errorf("survivor = %+v, want the relocated blocking comment that absorbed one", got)
 	}
-	if f.count(filterSystem) != 1 {
-		t.Errorf("refuter calls = %d, want 1: the blocking survivor faces the refuter", f.count(filterSystem))
+	if f.count(investigateSystem) != 1 {
+		t.Errorf("investigator calls = %d, want 1: only the merged survivor is investigated", f.count(investigateSystem))
 	}
 }
 
