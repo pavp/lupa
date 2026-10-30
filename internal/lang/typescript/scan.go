@@ -1,6 +1,8 @@
 // Package typescript is the TypeScript/JavaScript language provider.
 package typescript
 
+import "sort"
+
 // Imports returns the module specifiers a source file imports, in order, each once: static imports,
 // re-exports, dynamic import() and require() with a literal string. Comments, strings, template text
 // and regular expressions are skipped, so text that only looks like an import is ignored.
@@ -80,6 +82,7 @@ const (
 type token struct {
 	kind kind
 	text string
+	line int
 }
 
 func (t token) is(k kind, text string) bool { return t.kind == k && t.text == text }
@@ -92,13 +95,19 @@ func at(toks []token, i int) token {
 }
 
 type lexer struct {
-	src  []byte
-	pos  int
-	toks []token
+	src      []byte
+	pos      int
+	toks     []token
+	newlines []int
 }
 
 func lex(src []byte) []token {
 	l := &lexer{src: src}
+	for i, c := range src {
+		if c == '\n' {
+			l.newlines = append(l.newlines, i)
+		}
+	}
 	l.run(false)
 	return l.toks
 }
@@ -117,22 +126,24 @@ func (l *lexer) run(inTemplate bool) {
 			l.pos += 2
 			l.skipUntil("*/")
 		case c == '\'' || c == '"':
-			l.toks = append(l.toks, token{str, l.quoted(c)})
+			start := l.pos
+			l.emit(str, l.quoted(c), start)
 		case c == '`':
 			l.template()
 		case c == '/' && l.regexAllowed():
 			l.regex()
 		case c >= '0' && c <= '9':
+			start := l.pos
 			for l.pos < len(l.src) && (isIdentPart(l.src[l.pos]) || l.src[l.pos] == '.') {
 				l.pos++
 			}
-			l.toks = append(l.toks, token{ident, "0"})
+			l.emit(ident, "0", start)
 		case isIdentStart(c):
 			start := l.pos
 			for l.pos < len(l.src) && isIdentPart(l.src[l.pos]) {
 				l.pos++
 			}
-			l.toks = append(l.toks, token{ident, string(l.src[start:l.pos])})
+			l.emit(ident, string(l.src[start:l.pos]), start)
 		default:
 			l.pos++
 			if inTemplate && c == '{' {
@@ -144,9 +155,14 @@ func (l *lexer) run(inTemplate bool) {
 				}
 				depth--
 			}
-			l.toks = append(l.toks, token{punct, string(c)})
+			l.emit(punct, string(c), l.pos-1)
 		}
 	}
+}
+
+// emit appends a token that starts at byte offset start; its line counts the newlines before it.
+func (l *lexer) emit(k kind, text string, start int) {
+	l.toks = append(l.toks, token{kind: k, text: text, line: sort.SearchInts(l.newlines, start) + 1})
 }
 
 func (l *lexer) peek(n int) byte {
@@ -178,6 +194,7 @@ func (l *lexer) quoted(q byte) string {
 }
 
 // template skips the literal text of a template string and lexes its `${…}` expressions.
+// Its token sits on the line of the closing backtick, after its expressions, so lines never decrease.
 func (l *lexer) template() {
 	l.pos++
 	for l.pos < len(l.src) && l.src[l.pos] != '`' {
@@ -192,7 +209,7 @@ func (l *lexer) template() {
 		}
 	}
 	l.pos++
-	l.toks = append(l.toks, token{str, ""})
+	l.emit(str, "", l.pos-1)
 }
 
 // regexAllowed tells a regular expression from a division by the previous token.
@@ -216,6 +233,7 @@ var regexKeywords = map[string]bool{
 }
 
 func (l *lexer) regex() {
+	start := l.pos
 	l.pos++
 	inClass := false
 	for l.pos < len(l.src) && l.src[l.pos] != '\n' {
@@ -232,7 +250,7 @@ func (l *lexer) regex() {
 			for l.pos < len(l.src) && isIdentPart(l.src[l.pos]) {
 				l.pos++
 			}
-			l.toks = append(l.toks, token{punct, "regex"})
+			l.emit(punct, "regex", start)
 			return
 		}
 		l.pos++

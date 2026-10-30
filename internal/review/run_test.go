@@ -15,6 +15,7 @@ import (
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/mapping"
+	"github.com/pavp/lupa/internal/reach"
 	"github.com/pavp/lupa/internal/verify"
 )
 
@@ -115,6 +116,8 @@ func confirmCandidate(prompt string) string {
 	return string(b)
 }
 
+var runSymbols = map[string][]reach.Symbol{"lib/tax.ts": {{File: "lib/tax.ts", Name: "tax", Line: 3, End: 5, Callers: []reach.Site{{File: "src/order.ts", Line: 9}}}}}
+
 func (f *fakeRun) input(plan Result) RunInput {
 	fake := &agent.Fake{Reply: func(req agent.Request) (string, error) {
 		f.mu.Lock()
@@ -137,6 +140,7 @@ func (f *fakeRun) input(plan Result) RunInput {
 		Plan:        plan,
 		Patches:     runPatches,
 		Importers:   map[string][]string{"lib/tax.ts": {"src/order.ts"}},
+		Symbols:     runSymbols,
 		Conventions: []Convention{{Path: "AGENTS.md", Content: "Use tabs."}},
 		Agent:       billed{fake},
 		Dir:         "/tmp/worktree",
@@ -209,7 +213,7 @@ func TestRunReviewsEveryGroupAndInvestigatesEachFinding(t *testing.T) {
 		t.Errorf("cart evidence = %+v, want %+v", out.Findings[1].Evidence, want)
 	}
 	want := BuildPrompt(PromptInput{Patch: runTaxPatch, Paths: []string{"lib/tax.ts"},
-		Importers: map[string][]string{"lib/tax.ts": {"src/order.ts"}}, Conventions: []Convention{{Path: "AGENTS.md", Content: "Use tabs."}}})
+		Importers: map[string][]string{"lib/tax.ts": {"src/order.ts"}}, Symbols: runSymbols, Conventions: []Convention{{Path: "AGENTS.md", Content: "Use tabs."}}})
 	first := f.reqs[slices.IndexFunc(f.reqs, func(r agent.Request) bool { return group(r.Prompt, "lib/tax.ts") })]
 	if first.SystemPrompt != want.System || first.Prompt != want.User || first.Dir != "/tmp/worktree" || first.Timeout != 2*time.Minute || first.Schema != reviewSchema {
 		t.Errorf("first reviewer request = %+v, want the BuildPrompt of group 1 in the worktree with the timeout", first)

@@ -1,6 +1,10 @@
 package verify
 
-import "strings"
+import (
+	"maps"
+	"slices"
+	"strings"
+)
 
 // Causality values: how a comment's anchored lines relate to the change.
 const (
@@ -43,6 +47,12 @@ func Causality(loc Location, patches map[string]string) string {
 		}
 	}
 	return CausalityPreExisting
+}
+
+// AddedLines returns the sorted head line numbers of a unified diff's added lines.
+func AddedLines(patch string) []int {
+	added, _, _ := addedLines(patch)
+	return slices.Sorted(maps.Keys(added))
 }
 
 // addedLines returns the head line numbers of a unified diff's added lines, of every

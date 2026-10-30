@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/pavp/lupa/internal/reach"
 )
 
 // conventionLimit is the most bytes of one convention file a prompt carries.
@@ -16,15 +18,20 @@ const conventionLimit = 8000
 // hintLimit is the most bytes of importer hints a prompt carries; a barrel can reach hundreds of files.
 const hintLimit = 4000
 
+// symbolLimit is the most bytes of changed-symbol callers and callees a prompt carries.
+const symbolLimit = 6000
+
 // Convention is a repo instruction file (AGENTS.md, CLAUDE.md) read from the base branch.
 type Convention struct{ Path, Content string }
 
 // PromptInput is what one reviewer run is told about its group. Importers maps a group path to
-// the files that import it from outside the change; Patch is already within the byte budget.
+// the files that import it from outside the change, Symbols to the declarations the change touches
+// in it; Patch is already within the byte budget.
 type PromptInput struct {
 	Patch       string
 	Paths       []string
 	Importers   map[string][]string
+	Symbols     map[string][]reach.Symbol
 	Conventions []Convention
 }
 
@@ -59,6 +66,9 @@ func BuildPrompt(in PromptInput) Prompt {
 	if hints := importerHints(in.Paths, in.Importers); hints != "" {
 		data = append(data, block{"hints", truncate(hints, hintLimit)})
 	}
+	if calls := symbolHints(in.Paths, in.Symbols); calls != "" {
+		data = append(data, block{"symbols", truncate(calls, symbolLimit)})
+	}
 	data = append(data, block{"change", in.Patch})
 
 	paths, _ := json.Marshal(in.Paths)
@@ -89,6 +99,8 @@ func (d block) title() string {
 		return "# Repository conventions (from the base branch)"
 	case "hints":
 		return "# Hints: importers outside the change (a starting point, not exhaustive)"
+	case "symbols":
+		return "# Changed symbols: callers and callees matched by name (misses namespace imports, require and renamed re-exports; not exhaustive)"
 	case "comment":
 		return "# Comment whose quote was not found"
 	case "patch":
@@ -112,6 +124,38 @@ func importerHints(paths []string, importers map[string][]string) string {
 		}
 		slices.Sort(imps)
 		fmt.Fprintf(&b, "%s is imported by: %s\n", p, strings.Join(imps, ", "))
+	}
+	return b.String()
+}
+
+// symbolHints lists, in group order, each changed declaration that has callers or callees.
+func symbolHints(paths []string, symbols map[string][]reach.Symbol) string {
+	var b strings.Builder
+	for _, p := range paths {
+		for _, s := range symbols[p] {
+			if len(s.Callers) == 0 && len(s.Callees) == 0 {
+				continue
+			}
+			fmt.Fprintf(&b, "%s:%d-%d %s\n", s.File, s.Line, s.End, s.Name)
+			if len(s.Callers) > 0 {
+				sites := make([]string, len(s.Callers))
+				for i, c := range s.Callers {
+					sites[i] = fmt.Sprintf("%s:%d", c.File, c.Line)
+				}
+				fmt.Fprintf(&b, "  called from: %s\n", strings.Join(sites, ", "))
+			}
+			if len(s.Callees) > 0 {
+				calls := make([]string, len(s.Callees))
+				for i, c := range s.Callees {
+					where := c.File
+					if c.Line > 0 {
+						where = fmt.Sprintf("%s:%d", c.File, c.Line)
+					}
+					calls[i] = fmt.Sprintf("%s (%s)", c.Name, where)
+				}
+				fmt.Fprintf(&b, "  calls: %s\n", strings.Join(calls, ", "))
+			}
+		}
 	}
 	return b.String()
 }
