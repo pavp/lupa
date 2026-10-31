@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -336,6 +337,98 @@ func TestMapSkipsCodeMarkedGeneratedByHeaderOrAttributes(t *testing.T) {
 	}
 	if got.Size.GeneratedFiles != 2 || got.Size.Changed != 3 {
 		t.Errorf("size = %+v, want 2 generated files and 3 authored changed lines (keep.ts 1, a.ts 2)", got.Size)
+	}
+}
+
+func TestMapFlagsSilencedErrors(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "src/a.ts", "export async function save() {\n  await db.write();\n}\n")
+	write(t, dir, "deploy.sh", "make build\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	write(t, dir, "src/a.ts", "export async function save() {\n  try {\n    await db.write();\n  } catch (e) {}\n  await db.flush().catch(() => {});\n  return opts.enabled || true;\n}\n")
+	write(t, dir, "deploy.sh", "make build || true\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "change")
+
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got struct {
+		Silenced []struct {
+			File string `json:"file"`
+			Line int    `json:"line"`
+		} `json:"silenced_errors"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	var sites []string
+	for _, s := range got.Silenced {
+		sites = append(sites, fmt.Sprintf("%s:%d", s.File, s.Line))
+	}
+	if strings.Join(sites, ",") != "deploy.sh:1,src/a.ts:4,src/a.ts:5" {
+		t.Errorf("silenced_errors = %v, want deploy.sh:1, src/a.ts:4 (empty catch), src/a.ts:5 (catch that returns nothing)", sites)
+	}
+	_, text, _ := lupa(dir, "map", "main..feature")
+	if !strings.Contains(text, "- Error detection: 3 places swallow an error: `deploy.sh:1`, `src/a.ts:4`, `src/a.ts:5`") ||
+		!strings.Contains(text, "`src/a.ts:4` swallows an error: is that intended, and how would a failure show up?") {
+		t.Errorf("report lacks the error-detection line or its question:\n%s", text)
+	}
+}
+
+func TestMapFlagsARemovedExportStillImported(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "src/util.ts", "export function slug(s) {\n  return s.trim();\n}\nexport function keep() {\n  return 1;\n}\n")
+	write(t, dir, "src/page.ts", "import { slug } from './util';\nexport const p = slug(' x ');\n")
+	write(t, dir, "src/other.ts", "import { keep } from './util';\nexport const o = keep();\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	write(t, dir, "src/util.ts", "export function keep() {\n  return 1;\n}\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "drop slug")
+
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got struct {
+		Files []struct {
+			Path   string `json:"path"`
+			Class  string `json:"class"`
+			Risk   string `json:"risk"`
+			Reason string `json:"reason"`
+		} `json:"files"`
+		Removed []struct {
+			File  string   `json:"file"`
+			Name  string   `json:"name"`
+			Users []string `json:"users"`
+		} `json:"removed_exports"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Removed) != 1 || got.Removed[0].File != "src/util.ts" || got.Removed[0].Name != "slug" || strings.Join(got.Removed[0].Users, ",") != "src/page.ts:1" {
+		t.Errorf("removed_exports = %+v, want slug from src/util.ts still imported at src/page.ts:1", got.Removed)
+	}
+	if len(got.Files) != 1 || got.Files[0].Class != "read-first" || got.Files[0].Risk != "one-way-door" ||
+		got.Files[0].Reason != "removes exported slug, still imported by 1 file outside this change" {
+		t.Errorf("files = %+v, want util.ts read first as a one-way door", got.Files)
+	}
+	_, text, _ := lupa(dir, "map", "main..feature")
+	if !strings.Contains(text, "- Rollback: `src/util.ts` removes exported `slug`, still imported at `src/page.ts:1`") ||
+		!strings.Contains(text, "`src/util.ts` removes exported `slug`, still imported at `src/page.ts:1`: are those imports updated in another change?") ||
+		strings.Contains(text, "src/util.ts:1` is hard to roll back") {
+		t.Errorf("report lacks the removed-export risk line or question, or asks the generic rollback question:\n%s", text)
 	}
 }
 

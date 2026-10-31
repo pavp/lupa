@@ -158,7 +158,7 @@ func mapChange(env Env, target string) (m mapped, err error) {
 	}
 	r.Calls, r.ChangedCallers = callSitesOf(m.symbols, files)
 	m.signals = mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t), Patches: m.patches,
-		Generated: generatedOf(repo, head, files), Analyzed: func(p string) bool { return typescript.Provider{}.Owns(p) || strings.HasSuffix(p, ".d.ts") }})
+		Generated: generatedOf(repo, head, files), RemovedExports: removedExportsOf(repo, base, view, m.patches, files), Analyzed: func(p string) bool { return typescript.Provider{}.Owns(p) || strings.HasSuffix(p, ".d.ts") }})
 	return m, nil
 }
 
@@ -180,6 +180,77 @@ func generatedOf(repo git.Repo, head string, files []mapping.File) map[string]st
 		}
 	}
 	return out
+}
+
+// removedExportsOf finds exported TS/JS declarations whose lines the change removes and that head no longer
+// declares, with the importers outside the change that still import them by name.
+func removedExportsOf(repo git.Repo, base string, view *headView, patches map[string]string, files []mapping.File) []mapping.RemovedExport {
+	if view == nil {
+		return nil
+	}
+	provider := typescript.Provider{}
+	inChange := map[string]bool{}
+	for _, f := range files {
+		inChange[f.Path] = true
+	}
+	var out []mapping.RemovedExport
+	for _, f := range files {
+		removed := map[int]bool{}
+		for _, c := range verify.ChangedLines(patches[f.Path]) {
+			if c.Side == "-" {
+				removed[c.N] = true
+			}
+		}
+		head, err := view.read(f.Path)
+		if len(removed) == 0 || !provider.Owns(f.Path) || err != nil {
+			continue
+		}
+		old := f.Path
+		if f.OldPath != "" {
+			old = f.OldPath
+		}
+		src, ok := repo.Show(base, old)
+		if !ok {
+			continue
+		}
+		lines := strings.Split(string(src), "\n")
+		still := provider.Decls(head)
+		for _, d := range provider.Decls(src) {
+			if d.Line > len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[d.Line-1]), "export") || !anyIn(removed, d.Line, d.End) ||
+				slices.ContainsFunc(still, func(h lang.Decl) bool { return h.Name == d.Name && h.Default == d.Default }) {
+				continue
+			}
+			name := d.Name
+			if d.Default {
+				name = "default"
+			}
+			var users []string
+			for _, imp := range view.graph.DirectImporters(f.Path) {
+				isrc, err := view.read(imp)
+				if inChange[imp] || err != nil {
+					continue
+				}
+				for _, b := range provider.Bindings(isrc) {
+					if to, st := view.resolver.Resolve(imp, b.Spec); st == lang.Resolved && to == f.Path && b.Imported == name {
+						users = append(users, fmt.Sprintf("%s:%d", imp, b.Line))
+					}
+				}
+			}
+			if len(users) > 0 {
+				out = append(out, mapping.RemovedExport{File: f.Path, Name: d.Name, Users: users})
+			}
+		}
+	}
+	return out
+}
+
+func anyIn(lines map[int]bool, from, to int) bool {
+	for n := from; n <= to; n++ {
+		if lines[n] {
+			return true
+		}
+	}
+	return false
 }
 
 // mapped is a mapped change: the repo and store key, the map's signals, and the patches and changed
