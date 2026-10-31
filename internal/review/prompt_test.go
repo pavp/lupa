@@ -217,3 +217,27 @@ func TestBuildPromptBoundsTheSymbolsBlock(t *testing.T) {
 		t.Errorf("symbols block is %d bytes (truncation said: %v), want at most about %d", len(body), strings.Contains(body, "[truncated]"), symbolLimit)
 	}
 }
+
+func TestBuildPromptGivesEveryFileItsShareOfTheHints(t *testing.T) {
+	var many []string
+	var callers []reach.Site
+	for i := range 2000 {
+		many = append(many, fmt.Sprintf("src/features/feature-%04d/index.ts", i))
+		callers = append(callers, reach.Site{File: fmt.Sprintf("src/features/feature-%04d.ts", i), Line: i + 1})
+	}
+	in := promptInput()
+	in.Importers = map[string][]string{in.Paths[0]: many, in.Paths[1]: {"src/z.ts"}}
+	in.Symbols = map[string][]reach.Symbol{
+		in.Paths[0]: {{File: in.Paths[0], Name: "load", Line: 1, End: 2, Callers: callers}},
+		in.Paths[1]: {{File: in.Paths[1], Name: "save", Line: 3, End: 4, Callers: []reach.Site{{File: "src/q.ts", Line: 7}}}},
+	}
+	user := BuildPrompt(in).User
+	hints, _ := dataBlock(user, "hints")
+	if !strings.Contains(hints, in.Paths[1]+" is imported by: src/z.ts\n") || len(hints) > hintLimit+2*len("\n[truncated]\n") {
+		t.Errorf("hints = %d bytes, want the second file's line within about %d:\n%s", len(hints), hintLimit, hints[max(0, len(hints)-300):])
+	}
+	symbols, _ := dataBlock(user, "symbols")
+	if !strings.Contains(symbols, in.Paths[1]+":3-4 save\n  called from: src/q.ts:7\n") || len(symbols) > symbolLimit+2*len("\n[truncated]\n") {
+		t.Errorf("symbols = %d bytes, want the second file's entry within about %d:\n%s", len(symbols), symbolLimit, symbols[max(0, len(symbols)-300):])
+	}
+}

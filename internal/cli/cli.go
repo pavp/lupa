@@ -463,8 +463,8 @@ func runReview(args []string, env Env) error {
 	}
 	importers := map[string][]string{}
 	for _, f := range signals.Files {
-		if len(f.Importers) > 0 {
-			importers[f.Path] = f.Importers
+		if len(f.DirectImporters) > 0 {
+			importers[f.Path] = f.DirectImporters
 		}
 	}
 	symbols, err := symbolsOf(repo, signals.Head, patches)
