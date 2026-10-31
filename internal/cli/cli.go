@@ -29,11 +29,12 @@ import (
 	"github.com/pavp/lupa/internal/reach"
 	"github.com/pavp/lupa/internal/report"
 	"github.com/pavp/lupa/internal/review"
+	"github.com/pavp/lupa/internal/skill"
 	"github.com/pavp/lupa/internal/store"
 	"github.com/pavp/lupa/internal/verify"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n       lupa skill install\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.
@@ -47,6 +48,8 @@ type Env struct {
 	Forge Forge
 	// CacheDir holds the clones of PRs reviewed outside their clone; empty means lupa under the user cache dir.
 	CacheDir string
+	// Home is where `skill install` writes the skill; empty means the user's home directory.
+	Home string
 }
 
 // Forge reads a pull request, running in dir so a bare number resolves against that clone, and
@@ -91,9 +94,31 @@ func run(args []string, env Env) error {
 		return runMap(args[1:], env)
 	case "review":
 		return runReview(args[1:], env)
+	case "skill":
+		return runSkill(args[1:], env)
 	default:
 		return usageError{fmt.Sprintf("unknown command %q", args[0])}
 	}
+}
+
+// runSkill handles `lupa skill install`: the agent skill shipped in this binary, for Claude Code and Pi.
+func runSkill(args []string, env Env) error {
+	if len(args) != 1 || args[0] != "install" {
+		return usageError{"usage: lupa skill install"}
+	}
+	home := env.Home
+	if home == "" {
+		var err error
+		if home, err = os.UserHomeDir(); err != nil {
+			return err
+		}
+	}
+	paths, err := skill.Install(home)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(env.Stdout, "Installed the lupa skill:\n  %s\n  %s (link, for Claude Code)\nAsk your agent: /lupa <pr|branch>\n", paths[0], paths[1])
+	return err
 }
 
 // parseArgs reads one target, the given boolean flags and the given flags that take a value;
