@@ -2,6 +2,7 @@ package mapping
 
 import (
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -87,6 +88,39 @@ func TestClaimReceipts(t *testing.T) {
 			got := claims(c.body, files, patches)
 			if len(got) != 1 || len(got[0].Cites) != 1 || !reflect.DeepEqual(got[0].Cites[0], c.want) {
 				t.Errorf("claims = %+v, want one cite %+v", got, c.want)
+			}
+		})
+	}
+}
+
+func TestClaimReceiptsPreferTheHunkTheClaimPointsAt(t *testing.T) {
+	files := []File{{Path: "src/core/task.ts"}, {Path: "src/services/TelemetryService.ts"}, {Path: "src/cron/send.ts"}, {Path: "src/schema.prisma"}}
+	patches := map[string]string{
+		"src/core/task.ts":                 "--- a/src/core/task.ts\n+++ b/src/core/task.ts\n@@ -1,1 +1,2 @@\n run()\n+telemetry.captureHang(id)\n",
+		"src/services/TelemetryService.ts": "--- a/src/services/TelemetryService.ts\n+++ b/src/services/TelemetryService.ts\n@@ -1,1 +1,2 @@ class TelemetryService {\n x\n+  captureHang(id: string) {\n",
+		"src/cron/send.ts":                 "--- a/src/cron/send.ts\n+++ b/src/cron/send.ts\n@@ -1,1 +1,2 @@\n where: {\n+  cancelled: true,\n",
+		"src/schema.prisma":                "--- a/src/schema.prisma\n+++ b/src/schema.prisma\n@@ -1,1 +1,2 @@ model WorkflowReminder {\n id Int\n+  cancelled Boolean?\n",
+	}
+	cases := []struct {
+		name, body, cite string
+		want             Cite
+	}{
+		{"the file the claim names", "Adds `captureHang` to src/services/TelemetryService.ts.", "captureHang",
+			Cite{Text: "captureHang", Found: true, Path: "src/services/TelemetryService.ts", Side: "+", Line: 2, Code: "captureHang(id: string) {"}},
+		{"the hunk that holds another name the claim cites, header included and in any case", "A new field `cancelled` is added to the `workflowReminder` model", "cancelled",
+			Cite{Text: "cancelled", Found: true, Path: "src/schema.prisma", Side: "+", Line: 2, Code: "cancelled Boolean?"}},
+		{"alone, the first code line still wins", "Sets `cancelled`.", "cancelled",
+			Cite{Text: "cancelled", Found: true, Path: "src/cron/send.ts", Side: "+", Line: 2, Code: "cancelled: true,"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := claims(c.body, files, patches)
+			if len(got) != 1 {
+				t.Fatalf("claims = %+v, want one", got)
+			}
+			i := slices.IndexFunc(got[0].Cites, func(x Cite) bool { return x.Text == c.cite })
+			if i < 0 || !reflect.DeepEqual(got[0].Cites[i], c.want) {
+				t.Errorf("cites = %+v, want %+v", got[0].Cites, c.want)
 			}
 		})
 	}
