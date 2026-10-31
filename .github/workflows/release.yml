@@ -1,0 +1,39 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - run: go test ./...
+      - name: Check the tap token
+        id: tap
+        env:
+          HOMEBREW_TAP_TOKEN: ${{ secrets.LUPA_HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "$HOMEBREW_TAP_TOKEN" ]; then
+            echo "::warning::LUPA_HOMEBREW_TAP_TOKEN is not set; nothing was published. Add the secret, or release locally with goreleaser."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - if: steps.tap.outputs.skip != 'true'
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # A token with write access to pavp/homebrew-tap; the workflow's own token cannot push there.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.LUPA_HOMEBREW_TAP_TOKEN }}
