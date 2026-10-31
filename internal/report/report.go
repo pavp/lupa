@@ -63,6 +63,9 @@ func Markdown(s mapping.Signals) []byte {
 	for _, u := range s.Unresolved {
 		fmt.Fprintf(&b, "- Unresolved imports: `%s` imports `%s`\n", u.From, u.Specifier)
 	}
+	if len(s.NotAnalyzed) > 0 {
+		fmt.Fprintf(&b, "- Impact not analyzed for `%s` files: imports and call sites are followed for TS/JS only\n", strings.Join(s.NotAnalyzed, "`, `"))
+	}
 	for _, spec := range ignoredSpecifiers(s.IgnoredImports) {
 		froms := ignoredFrom(s.IgnoredImports, spec)
 		from := fmt.Sprintf("`%s`", froms[0])

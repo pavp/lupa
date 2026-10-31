@@ -34,13 +34,16 @@ type Rule struct {
 }
 
 var (
-	lockfiles = set("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "go.sum",
+	lockfiles = set("package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock", "go.sum",
 		"cargo.lock", "poetry.lock", "pipfile.lock", "uv.lock", "gemfile.lock", "composer.lock")
 	manifests = set("package.json", "go.mod", "pyproject.toml", "pipfile", "setup.py", "cargo.toml", "gemfile",
 		"composer.json", "pom.xml", "build.gradle", "build.gradle.kts")
-	ciFiles     = set(".gitlab-ci.yml", "jenkinsfile", "azure-pipelines.yml", "bitbucket-pipelines.yml")
-	ciDirs      = set(".github", ".circleci", "terraform", "k8s", "kubernetes", "helm", "infra", "deploy")
-	authWords   = set("auth", "oauth", "permission", "permissions", "session", "sessions", "token", "tokens")
+	ciFiles   = set(".gitlab-ci.yml", "jenkinsfile", "azure-pipelines.yml", "bitbucket-pipelines.yml")
+	ciDirs    = set(".circleci", "terraform", "k8s", "kubernetes", "helm", "infra", "deploy")
+	authWords = set("auth", "oauth", "authorization", "permission", "permissions", "session", "sessions", "token", "tokens",
+		"credential", "credentials", "password", "passwords", "secret", "secrets", "jwt", "login")
+	// schemaFiles are database schemas; a `schema.ts` is usually a validation schema, which rolls back like any code.
+	schemaFiles = set("schema.prisma", "schema.rb", "structure.sql")
 	testDirs    = set("test", "tests", "__tests__", "spec")
 	migrateDirs = set("migrations", "migration", "migrate")
 )
@@ -59,11 +62,13 @@ func Classify(p string) Rule {
 		return Rule{Skip, NoRisk, "build output"}
 	case dirs["generated"]:
 		return Rule{Skip, NoRisk, "generated code"}
+	case dirs["vendor"]:
+		return Rule{Skip, NoRisk, "vendored code"}
 	case isGenerated(base):
 		return Rule{Skip, NoRisk, "generated code"}
-	case anyOf(dirs, migrateDirs) || strings.HasSuffix(base, ".sql") || strings.HasPrefix(base, "schema."):
+	case anyOf(dirs, migrateDirs) || strings.HasSuffix(base, ".sql") || strings.HasSuffix(base, ".prisma") || schemaFiles[base]:
 		return Rule{ReadFirst, OneWayDoor, "migration or schema: hard to roll back"}
-	case anyOf(dirs, ciDirs) || ciFiles[base] || strings.HasPrefix(base, "dockerfile") ||
+	case anyOf(dirs, ciDirs) || isGitHubCI(p) || ciFiles[base] || strings.HasPrefix(base, "dockerfile") ||
 		strings.HasPrefix(base, "docker-compose") || strings.HasSuffix(base, ".tf"):
 		return Rule{ReadFirst, Impact, "CI or infrastructure"}
 	case strings.HasPrefix(base, ".env") || hasAuthWord(p):
@@ -83,7 +88,14 @@ func isGenerated(base string) bool {
 			return true
 		}
 	}
-	return strings.HasSuffix(base, ".pb.go") || strings.HasSuffix(base, "_pb2.py")
+	return strings.HasSuffix(base, ".pb.go") || strings.HasSuffix(base, "_pb2.py") || strings.HasSuffix(base, "_pb2_grpc.py") ||
+		strings.HasSuffix(base, "_pb2.pyi")
+}
+
+// isGitHubCI keeps .github's workflows, actions and dependabot config; its issue and PR templates are prose.
+func isGitHubCI(p string) bool {
+	p = strings.ToLower(p)
+	return strings.HasPrefix(p, ".github/workflows/") || strings.HasPrefix(p, ".github/actions/") || p == ".github/dependabot.yml"
 }
 
 func isTest(base string, dirs map[string]bool) bool {
