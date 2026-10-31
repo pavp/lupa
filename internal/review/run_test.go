@@ -192,6 +192,35 @@ func ledgerEntry(t *testing.T, ledger []Entry, path string) Entry {
 	return ledger[i]
 }
 
+func TestRunPromotesWarningsWithAnObservableHarmThatAnInvestigatorConfirms(t *testing.T) {
+	plan := runPlan(Options{})
+	harmed := func(c map[string]any, harm string) map[string]any { c["harm"] = harm; return c }
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			return answer([]string{"lib/tax.ts", "src/cart.ts"},
+				harmed(comment("lib/tax.ts", "warning", "rate may be undefined", taxQuote, false), "wrong_data"),
+				harmed(comment("src/cart.ts", "warning", "qty is named poorly", cartQuote, false), "none")), nil
+		},
+	}
+	in := f.input(plan)
+	in.Investigate = false
+	out := Run(context.Background(), in)
+
+	levels := map[string]string{}
+	for _, a := range out.Findings {
+		levels[a.Finding.Location.File] = a.Finding.Level
+	}
+	if want := map[string]string{"lib/tax.ts": verify.LevelImportant, "src/cart.ts": verify.LevelNote}; !reflect.DeepEqual(levels, want) {
+		t.Errorf("levels = %v, want the confirmed harm promoted and the other kept as a note", levels)
+	}
+	if n := f.count(investigateSystem); n != 1 {
+		t.Errorf("investigator calls = %d, want 1, for the warning with an observable harm only", n)
+	}
+	if len(out.Findings) != 2 || len(out.Findings[0].Evidence) == 0 {
+		t.Errorf("findings = %+v, want both, the promoted one with its evidence", out.Findings)
+	}
+}
+
 func TestRunWithoutInvestigationReportsEveryAnchoredCandidate(t *testing.T) {
 	plan := runPlan(Options{})
 	f := &fakeRun{

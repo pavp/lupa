@@ -294,8 +294,9 @@ func TestReviewRunPipelineByDefault(t *testing.T) {
 		flags  []string
 		stages map[string]int
 	}{
-		{"one reviewer run per group, no investigator", nil, map[string]int{"review": 1}},
-		{"--investigate adds an investigator per finding", []string{"--investigate"}, map[string]int{"review": 1, "investigate": 1}},
+		// The reviewer's only comment is a warning with an observable harm, so it gets an investigator either way.
+		{"one reviewer run per group, an investigator for a warning with an observable harm", nil, map[string]int{"review": 1, "investigate": 1}},
+		{"--investigate investigates every finding", []string{"--investigate"}, map[string]int{"review": 1, "investigate": 1}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -310,7 +311,7 @@ func TestReviewRunPipelineByDefault(t *testing.T) {
 			if err := json.Unmarshal([]byte(stdout), &r); err != nil {
 				t.Fatalf("not JSON: %v\n%s", err, stdout)
 			}
-			// The reviewer called it a warning, but an observable harm puts it in the main list.
+			// The reviewer called it a warning; an observable harm the investigator confirms puts it in the main list.
 			if len(r.Findings) != 1 || r.Findings[0].File != "b.go" || r.Findings[0].Level != "important" || r.Findings[0].Harm != "broken_caller" {
 				t.Errorf("findings = %+v, want the b.go finding, important, with its harm", r.Findings)
 			}
@@ -376,7 +377,8 @@ func TestReviewRunAsks(t *testing.T) {
 				}
 				return
 			}
-			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 0 unconfirmed · 1 agent run, $0.00\n"; len(reqs) != 1 || !strings.Contains(stdout, want) {
+			// The reviewer's warning has an observable harm, so one investigator confirms it into the main list.
+			if want := "1 finding: 0 blocking, 1 important, 0 notes, 0 follow-ups · 0 dropped · 0 refuted · 0 unconfirmed · 2 agent runs, $0.00\n"; len(reqs) != 2 || !strings.Contains(stdout, want) {
 				t.Errorf("agent calls %d, want summary %q in:\n%s", len(reqs), want, stdout)
 			}
 		})

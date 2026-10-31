@@ -63,25 +63,32 @@ func TestCausality(t *testing.T) {
 	}
 }
 
-func TestLevelByHarm(t *testing.T) {
+func TestLevelIgnoresHarm(t *testing.T) {
 	tests := []struct {
 		harm, severity string
-		settles        bool
-		causality      string
 		want           string
 	}{
-		{"wrong_data", "warning", false, CausalityIntroduced, LevelImportant},
-		{"failure", "warning", true, CausalityBehaviorActivated, LevelBlocking},
-		{"security", "severe", true, CausalityIntroduced, LevelBlocking},
-		{"broken_caller", "warning", true, CausalityUnknown, LevelImportant},
-		{"slow", "severe", true, CausalityIntroduced, LevelNote},
-		{"none", "severe", true, CausalityIntroduced, LevelNote},
-		{"failure", "severe", true, CausalityPreExisting, LevelFollowUp},
+		{"failure", "warning", LevelNote},
+		{"none", "severe", LevelBlocking},
+		{"", "severe", LevelBlocking},
 	}
 	for _, tt := range tests {
-		c := Comment{Harm: tt.harm, Severity: tt.severity, QuoteSettles: tt.settles}
-		if got := Level(c, tt.causality); got != tt.want {
-			t.Errorf("Level(harm %s, %s, settles=%v, %s) = %q, want %q", tt.harm, tt.severity, tt.settles, tt.causality, got, tt.want)
+		c := Comment{Harm: tt.harm, Severity: tt.severity, QuoteSettles: true}
+		if got := Level(c, CausalityIntroduced); got != tt.want {
+			t.Errorf("Level(harm %q, %s) = %q, want %q", tt.harm, tt.severity, got, tt.want)
+		}
+	}
+}
+
+func TestObservable(t *testing.T) {
+	for _, h := range []string{"wrong_data", "failure", "security", "broken_caller"} {
+		if !Observable(h) {
+			t.Errorf("Observable(%q) = false, want true", h)
+		}
+	}
+	for _, h := range []string{"slow", "none", ""} {
+		if Observable(h) {
+			t.Errorf("Observable(%q) = true, want false", h)
 		}
 	}
 }
