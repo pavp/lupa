@@ -1,0 +1,44 @@
+version: 2
+project_name: lupa
+
+builds:
+  - id: lupa
+    main: ./cmd/lupa
+    binary: lupa
+    env:
+      - CGO_ENABLED=0
+    goos: [darwin, linux]
+    goarch: [amd64, arm64]
+    ldflags:
+      - -s -w
+      - -X github.com/pavp/lupa/internal/cli.Version={{ .Version }}
+
+archives:
+  - id: lupa
+    ids: [lupa]
+    name_template: "lupa_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  use: github
+
+brews:
+  - name: lupa
+    repository:
+      owner: pavp
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/pavp/lupa"
+    license: "MIT"
+    description: "Verified code review, locally, with the coding agent you already use"
+    caveats: |
+      Check what lupa needs (git, gh, Claude Code login):  lupa doctor
+      Use it from Claude Code or Pi:                       lupa skill install
+    test: |
+      system "#{bin}/lupa", "--version"
