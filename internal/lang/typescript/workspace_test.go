@@ -70,7 +70,7 @@ func TestWorkspacePackages(t *testing.T) {
 	}
 }
 
-func TestAGeneratedModuleGitIgnoresIsExternal(t *testing.T) {
+func TestAModuleGitIgnoresIsIgnored(t *testing.T) {
 	r := resolverOver(t, map[string]string{
 		"package.json":                  `{ "workspaces": ["packages/*"] }`,
 		".gitignore":                    "# generated\npackages/prisma/enums\npackages/prisma/zod/*.ts\n!packages/prisma/zod/keep.ts\n",
@@ -84,12 +84,12 @@ func TestAGeneratedModuleGitIgnoresIsExternal(t *testing.T) {
 		spec   string
 		status Status
 	}{
-		{"@acme/prisma/enums", External},
-		{"@acme/prisma/zod/booking", External},
-		{"@acme/prisma/client", External},
+		{"@acme/prisma/enums", Ignored},
+		{"@acme/prisma/zod/booking", Ignored},
+		{"@acme/prisma/client", Ignored},
 		{"@acme/prisma/zod/keep", Unresolved},
 		{"@acme/prisma/missing", Unresolved},
-		{"../../../packages/prisma/enums", External},
+		{"../../../packages/prisma/enums", Ignored},
 	} {
 		if _, status := r.Resolve("apps/web/src/Home.tsx", tc.spec); status != tc.status {
 			t.Errorf("Resolve(%q) status = %v; want %v", tc.spec, status, tc.status)

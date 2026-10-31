@@ -16,6 +16,7 @@ type Status = lang.Status
 const (
 	Resolved   = lang.Resolved
 	External   = lang.External
+	Ignored    = lang.Ignored
 	Unresolved = lang.Unresolved
 )
 
@@ -121,7 +122,7 @@ func (r *Resolver) Resolve(from, spec string) (string, Status) {
 }
 
 // target resolves the path p to a source file, or reports it External when only a declaration file exists
-// there or git ignores it (a generated module), so neither is reported as a missing file.
+// there and Ignored when git ignores it, so neither is reported as a missing file.
 func (r *Resolver) target(p string) (string, Status) {
 	if f := r.file(p); f != "" {
 		return f, Resolved
@@ -132,8 +133,8 @@ func (r *Resolver) target(p string) (string, Status) {
 			return "", External
 		}
 	}
-	if r.generated(p) {
-		return "", External
+	if r.ignored(p) {
+		return "", Ignored
 	}
 	return "", Unresolved
 }
@@ -329,7 +330,7 @@ func stripJSONC(src []byte) []byte {
 	return out
 }
 
-func (r *Resolver) generated(p string) bool {
+func (r *Resolver) ignored(p string) bool {
 	if ignored(r.ignore, p) {
 		return true
 	}

@@ -14,6 +14,8 @@ type Unresolved struct {
 type Graph struct {
 	Imports    map[string][]string `json:"imports"`
 	Unresolved []Unresolved        `json:"unresolved"`
+	// Ignored are imports of paths the repo's .gitignore covers, kept apart from Unresolved.
+	Ignored []Unresolved `json:"ignored,omitempty"`
 }
 
 // DirectImporters returns the files that import file themselves, sorted.

@@ -49,6 +49,8 @@ type Reach struct {
 	Importers  map[string][]string
 	Direct     map[string][]string
 	Unresolved []Unresolved
+	// Ignored are imports of paths git ignores: most often generated, so reported apart and never asked about.
+	Ignored []Unresolved
 	// Imports are the resolved direct imports of changed files; nil when the language is not analyzed.
 	Imports map[string][]string
 	// Calls are, per changed file whose declarations were analyzed, the call sites (file:line) outside the
@@ -91,6 +93,8 @@ type Signals struct {
 	// Claims is null for a branch range.
 	Claims     []Claim      `json:"claims"`
 	Unresolved []Unresolved `json:"unresolved"`
+	// IgnoredImports name paths the repo's .gitignore covers; omitted when there are none.
+	IgnoredImports []Unresolved `json:"ignored_imports,omitempty"`
 
 	TestsNotImportingSubject []TestMismatch `json:"tests_not_importing_subject"`
 }
@@ -164,7 +168,7 @@ type Input struct {
 // Build computes the signals of the change.
 func Build(in Input) Signals {
 	files, reach := in.Files, in.Reach
-	s := Signals{Schema: Schema, Base: in.Base, Head: in.Head, Files: make([]File, len(files)), Unresolved: reach.Unresolved}
+	s := Signals{Schema: Schema, Base: in.Base, Head: in.Head, Files: make([]File, len(files)), Unresolved: reach.Unresolved, IgnoredImports: reach.Ignored}
 	if s.Unresolved == nil {
 		s.Unresolved = []Unresolved{}
 	}

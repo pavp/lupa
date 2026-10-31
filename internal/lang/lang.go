@@ -7,8 +7,10 @@ type Status int
 const (
 	// Resolved: the specifier names a source file in the repo.
 	Resolved Status = iota + 1
-	// External: a package or builtin outside the repo, or a generated file git ignores.
+	// External: a package or builtin outside the repo.
 	External
+	// Ignored: a path the repo's .gitignore covers, most often a generated module, sometimes a file left out by mistake.
+	Ignored
 	// Unresolved: the specifier names a repo file (relative path, alias, workspace package) that does not exist.
 	Unresolved
 )

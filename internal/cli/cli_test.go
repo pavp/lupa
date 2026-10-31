@@ -252,6 +252,51 @@ func TestMapReach(t *testing.T) {
 	}
 }
 
+func TestMapShowsImportsOfIgnoredPathsWithoutAskingTheAuthor(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, ".gitignore", "src/generated\n")
+	write(t, dir, "src/a.ts", "export const a = 1;\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	write(t, dir, "src/a.ts", "import { Role } from './generated/enums';\nexport const a = Role.Admin;\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "change")
+
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got struct {
+		Unresolved []json.RawMessage `json:"unresolved"`
+		Ignored    []struct {
+			From      string `json:"from"`
+			Specifier string `json:"specifier"`
+			Line      int    `json:"line"`
+		} `json:"ignored_imports"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Unresolved) != 0 || len(got.Ignored) != 1 || got.Ignored[0].From != "src/a.ts" || got.Ignored[0].Specifier != "./generated/enums" || got.Ignored[0].Line != 1 {
+		t.Errorf("unresolved = %s, ignored_imports = %+v; want ./generated/enums from src/a.ts:1 as ignored only", got.Unresolved, got.Ignored)
+	}
+
+	code, text, stderr := lupa(dir, "map", "main..feature")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	if !strings.Contains(text, "- Imports of paths git ignores (likely generated): `./generated/enums` from `src/a.ts`") {
+		t.Errorf("report lacks the ignored import line:\n%s", text)
+	}
+	if strings.Contains(text, "is a file missing from this change") {
+		t.Errorf("an ignored import must not ask the author about a missing file:\n%s", text)
+	}
+}
+
 func TestMapOwnersFromBaseAndGate(t *testing.T) {
 	dir, _, _ := newRepo(t)
 	if err := os.MkdirAll(filepath.Join(dir, ".github"), 0o755); err != nil {
