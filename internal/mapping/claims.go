@@ -137,10 +137,12 @@ func blank(s string, patterns ...*regexp.Regexp) string {
 	return s
 }
 
-// lookUp finds a cited text as a changed file, else on the first changed line of the diff, by path order.
+// lookUp finds a cited text as a changed file (also named without its extension), else on the first changed
+// line of the diff, by path order; a code line wins over a comment, which only mentions the name.
 func lookUp(cited string, files []File, patches map[string]string) Cite {
 	for _, f := range files {
-		if f.Path == cited || strings.HasSuffix(f.Path, "/"+cited) {
+		base := path.Base(f.Path)
+		if f.Path == cited || strings.HasSuffix(f.Path, "/"+cited) || !strings.ContainsAny(cited, "./") && strings.TrimSuffix(base, path.Ext(base)) == cited {
 			return Cite{Text: cited, Found: true, Path: f.Path}
 		}
 	}
@@ -149,14 +151,36 @@ func lookUp(cited string, files []File, patches map[string]string) Cite {
 		paths = append(paths, p)
 	}
 	slices.Sort(paths)
+	var mention *Cite
 	for _, p := range paths {
 		for _, l := range verify.ChangedLines(patches[p]) {
-			if holdsToken(l.Text, cited) {
-				return Cite{Text: cited, Found: true, Path: p, Side: l.Side, Line: l.N, Code: l.Text}
+			if !holdsToken(l.Text, cited) {
+				continue
+			}
+			c := Cite{Text: cited, Found: true, Path: p, Side: l.Side, Line: l.N, Code: l.Text}
+			if !isComment(l.Text) {
+				return c
+			}
+			if mention == nil {
+				mention = &c
 			}
 		}
 	}
+	if mention != nil {
+		return *mention
+	}
 	return Cite{Text: cited}
+}
+
+// isComment reports a line that is only a comment in the common line and block comment syntaxes.
+func isComment(line string) bool {
+	t := strings.TrimSpace(line)
+	for _, p := range []string{"//", "#", "/*", "*", "<!--", "--"} {
+		if strings.HasPrefix(t, p) {
+			return true
+		}
+	}
+	return false
 }
 
 // holdsToken reports whether line contains s with no identifier character glued to an identifier edge

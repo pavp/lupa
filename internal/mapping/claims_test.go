@@ -60,3 +60,27 @@ func TestClaimsOnlyForAPR(t *testing.T) {
 		t.Errorf("claims = %+v, want one found cite", s.Claims)
 	}
 }
+
+func TestClaimReceipts(t *testing.T) {
+	files := []File{{Path: "src/a.ts"}, {Path: "src/schema.prisma"}, {Path: "src/cron/scheduleEmailReminders.ts"}}
+	patches := map[string]string{
+		"src/a.ts":          "diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,1 +1,2 @@\n x\n+// marks the reminder cancelled\n",
+		"src/schema.prisma": "diff --git a/src/schema.prisma b/src/schema.prisma\n--- a/src/schema.prisma\n+++ b/src/schema.prisma\n@@ -1,1 +1,2 @@\n model R {\n+  cancelled Boolean?\n",
+	}
+	cases := []struct {
+		name, body string
+		want       Cite
+	}{
+		// A comment only mentions the name; the line that declares it supports the claim.
+		{"a code line wins over a comment", "Adds a `cancelled` field.", Cite{Text: "cancelled", Found: true, Path: "src/schema.prisma", Side: "+", Line: 2, Code: "cancelled Boolean?"}},
+		{"a changed file named without its extension", "Changes `scheduleEmailReminders`.", Cite{Text: "scheduleEmailReminders", Found: true, Path: "src/cron/scheduleEmailReminders.ts"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := claims(c.body, files, patches)
+			if len(got) != 1 || len(got[0].Cites) != 1 || !reflect.DeepEqual(got[0].Cites[0], c.want) {
+				t.Errorf("claims = %+v, want one cite %+v", got, c.want)
+			}
+		})
+	}
+}
