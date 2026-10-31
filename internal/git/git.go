@@ -207,6 +207,51 @@ func parseNumStat(out string) ([]FileChange, error) {
 	return changes, nil
 }
 
+// LogEntry is one commit of a log: its author email, subject, commit time (unix) and the paths it touched.
+type LogEntry struct {
+	Email, Subject string
+	Time           int64
+	Paths          map[string]bool
+}
+
+// Log returns the non-merge commits reachable from rev, committed at or after since (unix), that touch paths.
+// It lists names only: line counts would need every old blob, which a blobless clone fetches one by one.
+func (r Repo) Log(rev string, since int64, paths []string) ([]LogEntry, error) {
+	out, err := r.run(append([]string{"log", rev, fmt.Sprintf("--since=@%d", since), "--no-merges", "--no-renames",
+		"--format=%x1e%ae%x1f%ct%x1f%s", "--name-only", "--"}, paths...)...)
+	if err != nil {
+		return nil, err
+	}
+	var entries []LogEntry
+	for _, rec := range strings.Split(out, "\x1e")[1:] {
+		lines := strings.Split(rec, "\n")
+		head := strings.SplitN(lines[0], "\x1f", 3)
+		if len(head) != 3 {
+			continue
+		}
+		t, _ := strconv.ParseInt(head[1], 10, 64)
+		e := LogEntry{Email: strings.ToLower(head[0]), Time: t, Subject: head[2], Paths: map[string]bool{}}
+		for _, l := range lines[1:] {
+			if l = strings.TrimSpace(l); l != "" {
+				e.Paths[l] = true
+			}
+		}
+		entries = append(entries, e)
+	}
+	return entries, nil
+}
+
+// Stamp returns the commit time (unix) and author email of rev.
+func (r Repo) Stamp(rev string) (time int64, email string, err error) {
+	out, err := r.run("show", "-s", "--format=%ct%x1f%ae", rev)
+	if err != nil {
+		return 0, "", err
+	}
+	t, e, _ := strings.Cut(strings.TrimSpace(out), "\x1f")
+	time, err = strconv.ParseInt(t, 10, 64)
+	return time, strings.ToLower(e), err
+}
+
 // Files lists every file tracked at rev.
 func (r Repo) Files(rev string) ([]string, error) {
 	out, err := r.run("ls-tree", "-r", "-z", "--name-only", rev)

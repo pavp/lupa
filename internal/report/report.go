@@ -107,7 +107,7 @@ func Markdown(s mapping.Signals) []byte {
 		var lines []string
 		for _, e := range s.ReadingOrder {
 			if e.Section == sec.class {
-				lines = append(lines, fmt.Sprintf("   - `%s`: %s%s", e.Path, e.Why, ownersOf(s, e.Path)))
+				lines = append(lines, fmt.Sprintf("   - `%s`: %s%s%s", e.Path, e.Why, historyOf(s, e.Path), ownersOf(s, e.Path)))
 			}
 		}
 		if len(lines) > 0 {
@@ -258,4 +258,23 @@ func ignoredFrom(list []mapping.Unresolved, spec string) []string {
 		}
 	}
 	return out
+}
+
+// historyOf is the evidence a file's history adds to its reading-order line: its fix commits and a first change
+// by the PR author; one fact each, never a score.
+func historyOf(s mapping.Signals, path string) string {
+	for _, f := range s.Files {
+		if f.Path != path || f.History == nil || !mapping.IsCode(path) {
+			continue
+		}
+		var out string
+		if n := f.History.FixCommits; n > 0 {
+			out += fmt.Sprintf(" · %d fix %s in the last year (by message)", n, plural(n, "commit", "commits"))
+		}
+		if f.History.AuthorFirstChange {
+			out += " · first change here by the PR author"
+		}
+		return out
+	}
+	return ""
 }

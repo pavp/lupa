@@ -36,6 +36,10 @@ func readingOrder(files []File, imports map[string][]string) ([]ReadingEntry, []
 		if (a.Risk == OneWayDoor) != (b.Risk == OneWayDoor) {
 			return a.Risk == OneWayDoor
 		}
+		// Past fixes only break ties inside a section: history rewards large, busy files, so it never moves a file across.
+		if fa, fb := fixes(a), fixes(b); fa != fb {
+			return fa > fb
+		}
 		return a.Path < b.Path
 	})
 	sort.SliceStable(tests, func(i, j int) bool { return tests[i].Path < tests[j].Path })
@@ -145,3 +149,10 @@ func isTestPath(p string) bool {
 }
 
 func isEndToEnd(p string) bool { return strings.Contains(strings.ToLower(path.Base(p)), ".e2e.") }
+
+func fixes(f File) int {
+	if f.History == nil || !IsCode(f.Path) {
+		return 0
+	}
+	return f.History.FixCommits
+}

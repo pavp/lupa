@@ -432,6 +432,63 @@ func TestMapFlagsARemovedExportStillImported(t *testing.T) {
 	}
 }
 
+func TestMapShowsEachFilesHistory(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	write(t, dir, "a.ts", "a\n")
+	write(t, dir, "b.ts", "b\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	write(t, dir, "b.ts", "b2\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "fix: crash when empty", "--author", "Ann <ann@x>")
+	write(t, dir, "a.ts", "a2\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "feat: more", "--author", "Bob <bob@x>")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	write(t, dir, "a.ts", "a3\n")
+	write(t, dir, "b.ts", "b3\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "change", "--author", "Cid <cid@x>")
+
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	type history struct {
+		FixCommits        int     `json:"fix_commits"`
+		Commits90         int     `json:"commits_90d"`
+		Authors           int     `json:"authors"`
+		TopAuthorShare    float64 `json:"top_author_share"`
+		AuthorFirstChange bool    `json:"author_first_change"`
+	}
+	var got struct {
+		Files []struct {
+			Path    string   `json:"path"`
+			History *history `json:"history"`
+		} `json:"files"`
+		ReadingOrder []struct {
+			Path string `json:"path"`
+		} `json:"reading_order"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]history{
+		"a.ts": {FixCommits: 0, Commits90: 2, Authors: 2, TopAuthorShare: 0.5, AuthorFirstChange: true},
+		"b.ts": {FixCommits: 1, Commits90: 2, Authors: 2, TopAuthorShare: 0.5, AuthorFirstChange: true},
+	}
+	for _, f := range got.Files {
+		if f.History == nil || *f.History != want[f.Path] {
+			t.Errorf("%s history = %+v, want %+v", f.Path, f.History, want[f.Path])
+		}
+	}
+	if len(got.ReadingOrder) != 2 || got.ReadingOrder[0].Path != "b.ts" {
+		t.Errorf("reading order = %+v, want b.ts first: same class, more fix commits", got.ReadingOrder)
+	}
+	_, text, _ := lupa(dir, "map", "main..feature")
+	if !strings.Contains(text, "- `b.ts`: no rule matched · 1 fix commit in the last year (by message) · first change here by the PR author") {
+		t.Errorf("report lacks b.ts's history:\n%s", text)
+	}
+}
+
 func TestMapShowsImportsOfIgnoredPathsWithoutAskingTheAuthor(t *testing.T) {
 	dir := t.TempDir()
 	gitCmd(t, dir, "init", "-q", "-b", "main")
