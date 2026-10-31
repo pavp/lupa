@@ -51,14 +51,17 @@ func Imports(src []byte) []string {
 // fromClause reads `{ a, b as c }`, `* as ns`, `type X`, `x` up to `from "<specifier>"`.
 // Anything else, such as `export const`, means the statement has no source module.
 func fromClause(toks []token, i int) (string, bool) {
+	inBraces := false
 	for ; i < len(toks); i++ {
 		t := toks[i]
 		switch {
 		case t.is(ident, "from") && at(toks, i+1).kind == str:
 			return toks[i+1].text, true
-		case t.kind == ident && declares[t.text]:
+		case t.kind == ident && declares[t.text] && !inBraces:
 			return "", false
-		case t.kind == ident, t.is(punct, "{"), t.is(punct, "}"), t.is(punct, ","), t.is(punct, "*"):
+		case t.is(punct, "{"), t.is(punct, "}"):
+			inBraces = t.text == "{"
+		case t.kind == ident, t.is(punct, ","), t.is(punct, "*"):
 		default:
 			return "", false
 		}
