@@ -15,10 +15,10 @@ import (
 // conventionLimit is the most bytes of one convention file a prompt carries.
 const conventionLimit = 8000
 
-// hintLimit is the most bytes of importer hints a prompt carries; a barrel can reach hundreds of files.
+// hintLimit is the most bytes of importer hints a prompt carries, shared among the group's files.
 const hintLimit = 4000
 
-// symbolLimit is the most bytes of changed-symbol callers and callees a prompt carries.
+// symbolLimit is the most bytes of changed-symbol callers and callees a prompt carries, shared among the group's files.
 const symbolLimit = 6000
 
 // Convention is a repo instruction file (AGENTS.md, CLAUDE.md) read from the base branch.
@@ -74,11 +74,11 @@ func groupData(in PromptInput) string {
 	for _, c := range in.Conventions {
 		data = append(data, block{"convention", "Path: " + c.Path + "\n\n" + truncate(c.Content, conventionLimit)})
 	}
-	if hints := importerHints(in.Paths, in.Importers); hints != "" {
-		data = append(data, block{"hints", truncate(hints, hintLimit)})
+	if hints := shared(importerHints(in.Paths, in.Importers), hintLimit); hints != "" {
+		data = append(data, block{"hints", hints})
 	}
-	if calls := symbolHints(in.Paths, in.Symbols); calls != "" {
-		data = append(data, block{"symbols", truncate(calls, symbolLimit)})
+	if calls := shared(symbolHints(in.Paths, in.Symbols), symbolLimit); calls != "" {
+		data = append(data, block{"symbols", calls})
 	}
 	data = append(data, block{"change", in.Patch})
 	var b strings.Builder
@@ -105,7 +105,7 @@ func (d block) title() string {
 	case "convention":
 		return "# Repository conventions (from the base branch)"
 	case "hints":
-		return "# Hints: importers outside the change (a starting point, not exhaustive)"
+		return "# Hints: files outside the change that import these files directly (a starting point, not exhaustive)"
 	case "symbols":
 		return "# Changed symbols: callers and callees matched by name (misses namespace imports, require and renamed re-exports; not exhaustive)"
 	case "comment":
@@ -121,24 +121,46 @@ func (d block) title() string {
 	}
 }
 
-// importerHints lists, in group order, the importers of each path that has any.
-func importerHints(paths []string, importers map[string][]string) string {
+// shared joins the entries, one per file, within limit bytes: each entry gets an equal share, and what a short
+// entry leaves unused goes to the longer ones, so a file with a long list never pushes another file out.
+func shared(entries []string, limit int) string {
+	order := make([]int, len(entries))
+	for i := range order {
+		order[i] = i
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return len(entries[a]) - len(entries[b]) })
+	share := make([]int, len(entries))
+	left := limit
+	for k, i := range order {
+		share[i] = min(len(entries[i]), left/(len(order)-k))
+		left -= share[i]
+	}
 	var b strings.Builder
+	for i, e := range entries {
+		b.WriteString(truncate(e, share[i]))
+	}
+	return b.String()
+}
+
+// importerHints lists, in group order, the importers of each path that has any, one entry per path.
+func importerHints(paths []string, importers map[string][]string) []string {
+	var out []string
 	for _, p := range paths {
 		imps := slices.Clone(importers[p])
 		if len(imps) == 0 {
 			continue
 		}
 		slices.Sort(imps)
-		fmt.Fprintf(&b, "%s is imported by: %s\n", p, strings.Join(imps, ", "))
+		out = append(out, fmt.Sprintf("%s is imported by: %s\n", p, strings.Join(imps, ", ")))
 	}
-	return b.String()
+	return out
 }
 
-// symbolHints lists, in group order, each changed declaration that has callers or callees.
-func symbolHints(paths []string, symbols map[string][]reach.Symbol) string {
-	var b strings.Builder
+// symbolHints lists, in group order, each changed declaration that has callers or callees, one entry per path.
+func symbolHints(paths []string, symbols map[string][]reach.Symbol) []string {
+	var out []string
 	for _, p := range paths {
+		var b strings.Builder
 		for _, s := range symbols[p] {
 			if len(s.Callers) == 0 && len(s.Callees) == 0 {
 				continue
@@ -163,8 +185,11 @@ func symbolHints(paths []string, symbols map[string][]reach.Symbol) string {
 				fmt.Fprintf(&b, "  calls: %s\n", strings.Join(calls, ", "))
 			}
 		}
+		if b.Len() > 0 {
+			out = append(out, b.String())
+		}
 	}
-	return b.String()
+	return out
 }
 
 // dataNonce derives the block delimiter nonce from the data, rehashing until no block contains it,
