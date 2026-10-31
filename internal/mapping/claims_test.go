@@ -109,8 +109,8 @@ func TestClaimReceiptsPreferTheHunkTheClaimPointsAt(t *testing.T) {
 			Cite{Text: "captureHang", Found: true, Path: "src/services/TelemetryService.ts", Side: "+", Line: 2, Code: "captureHang(id: string) {"}},
 		{"the hunk that holds another name the claim cites, header included and in any case", "A new field `cancelled` is added to the `workflowReminder` model", "cancelled",
 			Cite{Text: "cancelled", Found: true, Path: "src/schema.prisma", Side: "+", Line: 2, Code: "cancelled Boolean?"}},
-		{"alone, the first code line still wins", "Sets `cancelled`.", "cancelled",
-			Cite{Text: "cancelled", Found: true, Path: "src/cron/send.ts", Side: "+", Line: 2, Code: "cancelled: true,"}},
+		{"alone, a declaration beats a use", "Sets `cancelled`.", "cancelled",
+			Cite{Text: "cancelled", Found: true, Path: "src/schema.prisma", Side: "+", Line: 2, Code: "cancelled Boolean?"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -121,6 +121,54 @@ func TestClaimReceiptsPreferTheHunkTheClaimPointsAt(t *testing.T) {
 			i := slices.IndexFunc(got[0].Cites, func(x Cite) bool { return x.Text == c.cite })
 			if i < 0 || !reflect.DeepEqual(got[0].Cites[i], c.want) {
 				t.Errorf("cites = %+v, want %+v", got[0].Cites, c.want)
+			}
+		})
+	}
+}
+
+func TestClaimReceiptsPreferADeclarationOverAUse(t *testing.T) {
+	patch := func(p, header, line string) string {
+		return "--- a/" + p + "\n+++ b/" + p + "\n@@ -1,1 +1,2 @@" + header + "\n x\n+" + line + "\n"
+	}
+	cases := []struct {
+		name, body, cite string
+		patches          map[string]string
+		want             string
+	}{
+		{"a field in a schema, when both hunks hold the other cite", "A new field `cancelled` is added to the `workflowReminder` model", "cancelled", map[string]string{
+			"src/cron/send.ts":  patch("src/cron/send.ts", "", "await prisma.workflowReminder.update({ data: { cancelled: true } })"),
+			"src/schema.prisma": patch("src/schema.prisma", " model WorkflowReminder {", "  cancelled Boolean?"),
+		}, "src/schema.prisma"},
+		{"a method definition", "Adds `captureHang`.", "captureHang", map[string]string{
+			"src/a.ts": patch("src/a.ts", "", "telemetry.captureHang(id)"),
+			"src/b.ts": patch("src/b.ts", " class Telemetry {", "  public async captureHang(id: string): Promise<void> {"),
+		}, "src/b.ts"},
+		{"a keyword declaration", "Adds `retryLimit`.", "retryLimit", map[string]string{
+			"src/a.ts": patch("src/a.ts", "", "if (n > retryLimit) return"),
+			"src/b.ts": patch("src/b.ts", "", "export const retryLimit = 3;"),
+		}, "src/b.ts"},
+		{"a column in a migration", "Adds `cancelled`.", "cancelled", map[string]string{
+			"src/a.ts":          patch("src/a.ts", "", "where: { cancelled: true },"),
+			"src/migration.sql": patch("src/migration.sql", "", `ALTER TABLE "WorkflowReminder" ADD COLUMN "cancelled" BOOLEAN;`),
+		}, "src/migration.sql"},
+		{"among uses only, the first by path", "Uses `retryLimit`.", "retryLimit", map[string]string{
+			"src/a.ts": patch("src/a.ts", "", "if (n > retryLimit) return"),
+			"src/b.ts": patch("src/b.ts", "", "log(retryLimit)"),
+		}, "src/a.ts"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var files []File
+			for p := range c.patches {
+				files = append(files, File{Path: p})
+			}
+			got := claims(c.body, files, c.patches)
+			if len(got) != 1 {
+				t.Fatalf("claims = %+v, want one", got)
+			}
+			i := slices.IndexFunc(got[0].Cites, func(x Cite) bool { return x.Text == c.cite })
+			if i < 0 || got[0].Cites[i].Path != c.want {
+				t.Errorf("cites = %+v, want %s in %s", got[0].Cites, c.cite, c.want)
 			}
 		})
 	}
