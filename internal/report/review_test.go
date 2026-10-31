@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pavp/lupa/internal/mapping"
 	"github.com/pavp/lupa/internal/review"
 	"github.com/pavp/lupa/internal/verify"
 )
@@ -67,7 +68,7 @@ func TestReview(t *testing.T) {
 		"",
 		"4 findings: 1 blocking, 1 important, 1 note, 1 follow-up · 2 dropped · 1 refuted · 1 unconfirmed · 3 agent runs, $0.12",
 		"",
-		"### Blocking",
+		"### Check these (1 blocking, 1 important)",
 		"",
 		"**1. Loop skips the first item** (`src/cart.ts:5-6` · introduced · relocated · merged 2)",
 		"",
@@ -82,8 +83,6 @@ func TestReview(t *testing.T) {
 		"",
 		"Evidence: `src/cart.ts:5`, `src/sum.ts:12`",
 		"",
-		"### Important",
-		"",
 		"**2. Key is hardcoded** (`src/api.ts:12` · unknown)",
 		"",
 		"Why it matters: anyone with the repo reads the key",
@@ -94,29 +93,10 @@ func TestReview(t *testing.T) {
 		"",
 		"Fix: Read it from the environment",
 		"",
-		"### Notes",
+		"### Minor (one line each; the JSON has the details)",
 		"",
-		"**3. Label is now shown** (`src/ui.ts:3` · behavior-activated)",
-		"",
-		"Why it matters: the flag defaults to true",
-		"",
-		"```",
-		"show: true",
-		"```",
-		"",
-		"Fix: Default the flag to false",
-		"",
-		"### Follow-up (pre-existing)",
-		"",
-		"**4. Retry never stops** (`src/old.ts:40` · pre-existing)",
-		"",
-		"Why it matters: the loop has no limit",
-		"",
-		"```",
-		"while (true) retry()",
-		"```",
-		"",
-		"Fix: Cap the retries",
+		"- note · `src/ui.ts:3` · behavior-activated: Label is now shown",
+		"- follow-up · `src/old.ts:40` · pre-existing: Retry never stops",
 		"",
 		"### Coverage",
 		"",
@@ -125,15 +105,17 @@ func TestReview(t *testing.T) {
 		"- Skipped: `package-lock.json`: generated: lockfile",
 		"- Not reviewed: `src/big.ts`: hunk at line 1 exceeds the prompt budget (70000 bytes > 60000)",
 		"",
-		"### Unconfirmed",
+		"### Discarded or not confirmed",
+		"",
+		"Unconfirmed:",
 		"",
 		"- blocking · `src/pay.ts:7-8`: Total may overflow — unproven: no caller passes a large total",
 		"",
-		"### Refuted",
+		"Refuted:",
 		"",
 		"- important · `src/cart.ts:9`: Null deref — evidence `src/guard.ts:4` — blocks: cart reaching the sum as null — guarded at entry",
 		"",
-		"### Dropped",
+		"Dropped:",
 		"",
 		"- schema (group 1) · `src/cart.ts`: missing field: fix",
 		"- anchor (group 2) · `src/api.ts`: quote not found in the change — Wrong header",
@@ -218,6 +200,53 @@ func TestReviewShowsRunNotesAndRedactsReasons(t *testing.T) {
 		if strings.Contains(got, leak) {
 			t.Errorf("%q leaked:\n%s", leak, got)
 		}
+	}
+}
+
+func TestReviewWithTheMap(t *testing.T) {
+	in := sampleReview()
+	in.Map = &mapping.Signals{
+		ReviewNow: mapping.Gate{Decision: mapping.Review, Reason: "small change with tests"},
+		ReadingOrder: []mapping.ReadingEntry{
+			{Path: "src/db.ts", Section: mapping.ReadFirst, Why: "one-way door"},
+			{Path: "src/api.ts", Section: mapping.Skim, Why: "small change"},
+			{Path: "src/cart.ts", Section: mapping.Skim, Why: "small change"},
+			{Path: "package-lock.json", Section: mapping.Skip, Why: "generated"},
+		},
+	}
+	in.Out.Claims = []review.ClaimCheck{{Sentence: "Adds retries.", Outcome: review.ClaimUnsupported}}
+	got := string(Review(in))
+	order := []string{
+		"**Review now? Yes** — small change with tests\n",
+		"### Description vs diff (prose claims)",
+		"### Check these",
+		"### Reading order\n\n1. `src/cart.ts`: 1 to check · small change\n2. `src/api.ts`: 1 to check · small change\n3. `src/db.ts`: one-way door\n\n",
+		"### Minor",
+		"### Coverage",
+		"### Discarded or not confirmed",
+	}
+	last := -1
+	for _, w := range order {
+		i := strings.Index(got, w)
+		if i < 0 || i < last {
+			t.Fatalf("review lacks %q after the previous part:\n%s", w, got)
+		}
+		last = i
+	}
+	if strings.Contains(got, "package-lock.json`: generated\n") && strings.Contains(got, "### Reading order\n\n1. `package-lock") {
+		t.Errorf("reading order lists a skipped file:\n%s", got)
+	}
+}
+
+func TestReviewShowsWhyAWarningWasNotPromoted(t *testing.T) {
+	in := sampleReview()
+	for i, a := range in.Out.Findings {
+		if a.Finding.Level == verify.LevelNote {
+			in.Out.Findings[i].Held = "unproven: no caller passes it"
+		}
+	}
+	if got, want := string(Review(in)), "- note · `src/ui.ts:3` · behavior-activated: Label is now shown — not promoted: unproven: no caller passes it\n"; !strings.Contains(got, want) {
+		t.Errorf("review lacks %q:\n%s", want, got)
 	}
 }
 
