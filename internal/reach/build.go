@@ -15,6 +15,11 @@ func Build(files []string, readFile func(string) ([]byte, error), p lang.Provide
 	if err != nil {
 		return Graph{}, err
 	}
+	return BuildWith(files, readFile, p, resolver)
+}
+
+// BuildWith is Build with a resolver the caller already has, so the repo's configs are read once per run.
+func BuildWith(files []string, readFile func(string) ([]byte, error), p lang.Provider, resolver lang.Resolver) (Graph, error) {
 	g := Graph{Imports: map[string][]string{}}
 	for _, f := range files {
 		if !p.Owns(f) {

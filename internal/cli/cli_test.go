@@ -252,6 +252,42 @@ func TestMapReach(t *testing.T) {
 	}
 }
 
+func TestMapAnImportOnlyEditIsNotRankedByItsImporters(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	if err := os.MkdirAll(filepath.Join(dir, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "src/util.ts", "export const one = 1;\nexport const two = 2;\n")
+	write(t, dir, "src/builder.ts", "import { one } from './util';\nexport const build = () => one;\n")
+	for _, f := range []string{"a", "b", "c"} {
+		write(t, dir, "src/"+f+".ts", "import { build } from './builder';\nexport const "+f+" = build();\n")
+	}
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	write(t, dir, "src/builder.ts", "import { one, two } from './util';\nexport const build = () => one;\n")
+	gitCmd(t, dir, "commit", "-q", "-am", "change")
+
+	code, stdout, stderr := lupa(dir, "map", "main..feature", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got struct {
+		Files []struct {
+			Path   string `json:"path"`
+			Class  string `json:"class"`
+			Reason string `json:"reason"`
+		} `json:"files"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Files) != 1 || strings.Contains(got.Files[0].Reason, "imported by") || got.Files[0].Class == "read-first" {
+		t.Errorf("files = %+v, want builder.ts not ranked by its 3 importers: its change touches no declaration", got.Files)
+	}
+}
+
 func TestMapShowsImportsOfIgnoredPathsWithoutAskingTheAuthor(t *testing.T) {
 	dir := t.TempDir()
 	gitCmd(t, dir, "init", "-q", "-b", "main")

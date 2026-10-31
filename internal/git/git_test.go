@@ -297,6 +297,18 @@ func TestBlobReaderRejectsAPathThatWouldSplitTheRequest(t *testing.T) {
 	}
 }
 
+func TestBlobReaderNamesThePathWhenAReadFails(t *testing.T) {
+	repo, _ := worktreeRepo(t)
+	r, err := Repo{Dir: repo}.Reader("HEAD")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.Close()
+	if _, err := r.Read("a.txt"); err == nil || !strings.Contains(err.Error(), "a.txt") {
+		t.Errorf("Read after the reader stopped = %v, want an error naming a.txt", err)
+	}
+}
+
 func TestNumStatAuthoredIgnoresWhitespaceOnlyChanges(t *testing.T) {
 	dir := t.TempDir()
 	gitCmd(t, dir, "init", "-q", "-b", "main")
