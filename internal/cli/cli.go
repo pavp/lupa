@@ -155,7 +155,7 @@ func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, 
 	if err != nil {
 		return repo, mapping.Signals{}, "", err
 	}
-	r.Calls = callSitesOf(syms, files)
+	r.Calls, r.ChangedCallers = callSitesOf(syms, files)
 	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t), Patches: patches}), key, nil
 }
 
@@ -916,24 +916,33 @@ func resolveRange(repo git.Repo, target string) (base, head string, err error) {
 }
 
 // callSitesOf lists, per changed file with analyzed declarations, the call sites outside the change of the
-// declarations it touches, as sorted file:line; a file with none still gets its key, so it reads as analyzed.
-func callSitesOf(syms map[string][]reach.Symbol, files []mapping.File) map[string][]string {
+// declarations it touches, as sorted file:line (a file with none still gets its key, so it reads as analyzed),
+// and the other changed files that call them.
+func callSitesOf(syms map[string][]reach.Symbol, files []mapping.File) (outside, inChange map[string][]string) {
 	changed := map[string]bool{}
 	for _, f := range files {
 		changed[f.Path] = true
 	}
-	out := map[string][]string{}
+	outside, inChange = map[string][]string{}, map[string][]string{}
 	for file, list := range syms {
-		var sites []string
+		var sites, callers []string
 		for _, s := range list {
 			for _, c := range s.Callers {
-				if site := fmt.Sprintf("%s:%d", c.File, c.Line); !changed[c.File] && !slices.Contains(sites, site) {
+				site := fmt.Sprintf("%s:%d", c.File, c.Line)
+				switch {
+				case !changed[c.File] && !slices.Contains(sites, site):
 					sites = append(sites, site)
+				case changed[c.File] && c.File != file && !slices.Contains(callers, c.File):
+					callers = append(callers, c.File)
 				}
 			}
 		}
 		slices.Sort(sites)
-		out[file] = sites
+		slices.Sort(callers)
+		outside[file] = sites
+		if len(callers) > 0 {
+			inChange[file] = callers
+		}
 	}
-	return out
+	return outside, inChange
 }

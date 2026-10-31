@@ -52,3 +52,13 @@ func TestImpactByCallSites(t *testing.T) {
 		t.Errorf("c.go = %+v, want impact by importers where calls are not analyzed", c)
 	}
 }
+
+func TestReadFirstWhenOtherChangedFilesCallIt(t *testing.T) {
+	files := []File{{Path: "src/lib.ts", Additions: 1}, {Path: "src/a.ts", Additions: 1}, {Path: "src/b.ts", Additions: 1}}
+	reach := Reach{Calls: map[string][]string{"src/lib.ts": nil}, ChangedCallers: map[string][]string{"src/lib.ts": {"src/a.ts", "src/b.ts"}}}
+	for _, f := range Build(Input{Files: files, Reach: reach}).Files {
+		if f.Path == "src/lib.ts" && (f.Class != ReadFirst || f.Reason != "its changed declarations are called from 2 other changed files") {
+			t.Errorf("lib.ts = %+v, want read first: the rest of the change depends on it", f)
+		}
+	}
+}

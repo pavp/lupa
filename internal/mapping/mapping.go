@@ -53,6 +53,8 @@ type Reach struct {
 	// Calls are, per changed file whose declarations were analyzed, the call sites (file:line) outside the
 	// change of the declarations the change touches; a file absent from it was not analyzed.
 	Calls map[string][]string
+	// ChangedCallers are, per changed file, the other changed files that call the declarations it changes.
+	ChangedCallers map[string][]string
 }
 
 // TestMismatch is a test named after a changed file that does not import it, so it may not exercise it.
@@ -179,6 +181,11 @@ func Build(in Input) Signals {
 		case analyzed && len(sites) > 0:
 			f.Class, f.Risk = ReadFirst, Impact
 			f.Reason = fmt.Sprintf("%d call %s of its changed declarations outside this change", len(sites), plural(len(sites), "site", "sites"))
+		case analyzed && len(reach.ChangedCallers[f.Path]) > 0:
+			// The rest of the change is built on this file, so reading it first explains the others.
+			n := len(reach.ChangedCallers[f.Path])
+			f.Class = ReadFirst
+			f.Reason = fmt.Sprintf("its changed declarations are called from %d other changed %s", n, plural(n, "file", "files"))
 		case !analyzed && len(f.Importers) > 0:
 			f.Class, f.Risk = ReadFirst, Impact
 			f.Reason = fmt.Sprintf("imported by %d %s outside this change", len(f.Importers), plural(len(f.Importers), "file", "files"))
