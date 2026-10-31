@@ -52,21 +52,28 @@ func Install(home string) ([]string, error) {
 	return []string{file, link}, nil
 }
 
-// ours fails when path holds a skill this command did not write.
+// ours fails when path holds a skill this command did not write; a missing file is fine, nothing is there.
 func ours(path string) error {
 	got, err := os.ReadFile(path)
 	switch {
 	case errors.Is(err, fs.ErrNotExist):
 		return nil
 	case err != nil:
-		return err
-	case !bytes.Contains(got, marker):
+		return fmt.Errorf("%s: %w", path, err)
+	case !marked(got):
 		return fmt.Errorf("%s holds a lupa skill lupa did not write; move it away to install", path)
 	}
 	return nil
 }
 
-// linkable fails when link exists and is anything but a link to dir or a skill this command wrote.
+// marked reports the marker inside the frontmatter, so a skill that only mentions it in its body is not taken for ours.
+func marked(skill []byte) bool {
+	front, _, ok := bytes.Cut(bytes.TrimPrefix(skill, []byte("---\n")), []byte("\n---\n"))
+	return ok && bytes.HasPrefix(skill, []byte("---\n")) && bytes.Contains(front, marker)
+}
+
+// linkable fails when link exists and is anything but a link to dir, or a directory an earlier install wrote
+// that holds only its skill file: a directory without that file, or with anything added, is the user's.
 func linkable(link, dir string) error {
 	info, err := os.Lstat(link)
 	switch {
@@ -75,12 +82,26 @@ func linkable(link, dir string) error {
 	case err != nil:
 		return err
 	case info.Mode()&fs.ModeSymlink != 0:
-		if dest, _ := os.Readlink(link); dest == dir {
+		dest, _ := os.Readlink(link)
+		if !filepath.IsAbs(dest) {
+			dest = filepath.Join(filepath.Dir(link), dest)
+		}
+		if filepath.Clean(dest) == filepath.Clean(dir) {
 			return nil
 		}
 		return fmt.Errorf("%s links elsewhere; remove it to install", link)
+	case !info.IsDir():
+		return fmt.Errorf("%s is a file; move it away to install", link)
 	}
-	if err := ours(filepath.Join(link, "SKILL.md")); err != nil {
+	entries, err := os.ReadDir(link)
+	if err != nil {
+		return err
+	}
+	if len(entries) != 1 || entries[0].Name() != "SKILL.md" {
+		return fmt.Errorf("%s holds files lupa did not write; move it away to install", link)
+	}
+	got, err := os.ReadFile(filepath.Join(link, "SKILL.md"))
+	if err != nil || !marked(got) {
 		return fmt.Errorf("%s holds a lupa skill lupa did not write; move it away to install", link)
 	}
 	return nil
