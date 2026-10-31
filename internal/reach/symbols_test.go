@@ -13,13 +13,16 @@ import (
 func TestChangedSymbols(t *testing.T) {
 	repo := map[string]string{
 		"src/util.ts":      "export function slug(s) {\n  return s.trim();\n}\nexport const other = 1;\n",
-		"src/index.ts":     "export * from './load';\nexport * from './util';\n",
+		"src/index.ts":     "export * from './load';\nexport * from './util';\nexport { default as Handler } from './handler';\n",
 		"src/load.ts":      "import { slug } from './util';\n\nexport function load(id) {\n  return slug(id);\n}\n\nexport function keep() {\n  return load(1);\n}\n",
 		"src/page.ts":      "import { load as fetchIt } from './index';\n\nfetchIt(2);\n",
 		"src/elsewhere.ts": "export function load() {}\n",
 		"src/other.ts":     "import { load } from './elsewhere';\nimport './load';\nload(3);\n",
 		"src/handler.ts":   "import { slug } from './index';\n\nexport default function handler() {\n  return slug('x');\n}\n",
 		"src/app.ts":       "import h from './handler';\nh();\n",
+		"src/menu.ts":      "import { Handler } from './index';\nHandler();\n",
+		"src/widget.ts":    "import handler from './handler';\n\nexport default function widget() {\n  return handler();\n}\n",
+		"src/screen.ts":    "import w from './widget';\nw();\n",
 	}
 	files := make([]string, 0, len(repo))
 	for f := range repo {
@@ -51,7 +54,7 @@ func TestChangedSymbols(t *testing.T) {
 	}
 	want := []Symbol{
 		{File: "src/handler.ts", Name: "handler", Line: 3, End: 5,
-			Callers: []Site{{File: "src/app.ts", Line: 2}},
+			Callers: []Site{{File: "src/app.ts", Line: 2}, {File: "src/menu.ts", Line: 2}, {File: "src/widget.ts", Line: 4}},
 			Callees: []Callee{{Name: "slug", Site: Site{File: "src/util.ts", Line: 1}}}},
 		{File: "src/load.ts", Name: "load", Line: 3, End: 5,
 			Callers: []Site{{File: "src/load.ts", Line: 8}, {File: "src/page.ts", Line: 3}},
