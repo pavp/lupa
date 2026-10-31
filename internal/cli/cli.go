@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -158,7 +160,7 @@ func mapChange(env Env, target string) (m mapped, err error) {
 	}
 	r.Calls, r.ChangedCallers = callSitesOf(m.symbols, files)
 	m.signals = mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t), Patches: m.patches,
-		Generated: generatedOf(repo, head, files), RemovedExports: removedExportsOf(repo, base, view, m.patches, files), Analyzed: func(p string) bool { return typescript.Provider{}.Owns(p) || strings.HasSuffix(p, ".d.ts") }})
+		History: historyOf(repo, base, head, files), Generated: generatedOf(repo, head, files), RemovedExports: removedExportsOf(repo, base, view, m.patches, files), Analyzed: func(p string) bool { return typescript.Provider{}.Owns(p) || strings.HasSuffix(p, ".d.ts") }})
 	return m, nil
 }
 
@@ -181,6 +183,66 @@ func generatedOf(repo git.Repo, head string, files []mapping.File) map[string]st
 	}
 	return out
 }
+
+// historyOf reads the base's last year of git log for the changed files; the window is anchored at the base
+// commit, never at the current time, so the same change always maps the same way. A file new in the change has none.
+func historyOf(repo git.Repo, base, head string, files []mapping.File) map[string]mapping.History {
+	baseTime, _, err := repo.Stamp(base)
+	if err != nil {
+		return nil
+	}
+	_, author, err := repo.Stamp(head)
+	if err != nil {
+		return nil
+	}
+	paths := make([]string, 0, len(files))
+	for _, f := range files {
+		paths = append(paths, f.Path)
+		if f.OldPath != "" {
+			paths = append(paths, f.OldPath)
+		}
+	}
+	const day = 24 * 60 * 60
+	entries, err := repo.Log(base, baseTime-365*day, paths)
+	if err != nil {
+		return nil
+	}
+	out := map[string]mapping.History{}
+	for _, f := range files {
+		var h mapping.History
+		by := map[string]int{}
+		total := 0
+		for _, e := range entries {
+			if !e.Paths[f.Path] && (f.OldPath == "" || !e.Paths[f.OldPath]) {
+				continue
+			}
+			total++
+			by[e.Email]++
+			if fixSubject.MatchString(e.Subject) {
+				h.FixCommits++
+			}
+			if e.Time >= baseTime-90*day {
+				h.Commits90++
+			}
+		}
+		if total == 0 {
+			continue
+		}
+		top := 0
+		for _, n := range by {
+			top = max(top, n)
+		}
+		h.Authors = len(by)
+		h.TopAuthorShare = math.Round(float64(top)/float64(total)*100) / 100
+		h.AuthorFirstChange = by[author] == 0
+		out[f.Path] = h
+	}
+	return out
+}
+
+// fixSubject marks a commit as a fix by its subject; about half of such matches are not bug fixes, so it is
+// shown as a count with its source, never as a verdict.
+var fixSubject = regexp.MustCompile(`(?i)\b(fix|bug|fault|regress|revert)\w*`)
 
 // removedExportsOf finds exported TS/JS declarations whose lines the change removes and that head no longer
 // declares, with the importers outside the change that still import them by name.
