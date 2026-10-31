@@ -47,7 +47,7 @@ type SymbolInput struct {
 
 // ChangedSymbols returns the declarations that contain an added line, sorted by file and line. Callers are
 // the uses of the name elsewhere in its file and in importers whose binding resolves to the file or to a
-// barrel that reaches it; matching is by name, so a renaming re-export is not followed.
+// barrel whose re-exports carry its name to them, renaming ones included.
 func ChangedSymbols(in SymbolInput) ([]Symbol, error) {
 	s := scan{SymbolInput: in, src: map[string][]byte{}}
 	var out []Symbol
@@ -102,17 +102,20 @@ func (s scan) callers(file string, src []byte, d lang.Decl) ([]Site, error) {
 		exported = "default"
 	}
 	importers := s.Graph.Importers(file)
+	carried, err := s.carriers(file, exported, importers)
+	if err != nil {
+		return nil, err
+	}
 	for _, imp := range importers {
 		isrc, err := s.read(imp)
 		if err != nil {
 			return nil, err
 		}
 		for _, b := range s.Symbols.Bindings(isrc) {
-			if b.Reexport || b.Imported != exported {
+			if b.Reexport {
 				continue
 			}
-			to, status := s.Resolver.Resolve(imp, b.Spec)
-			if status != lang.Resolved || to != file && !slices.Contains(importers, to) {
+			if to, status := s.Resolver.Resolve(imp, b.Spec); status != lang.Resolved || !carried[export{to, b.Imported}] {
 				continue
 			}
 			for _, n := range s.Symbols.Uses(isrc, b.Local) {
@@ -124,6 +127,45 @@ func (s scan) callers(file string, src []byte, d lang.Decl) ([]Site, error) {
 		return out[i].File < out[j].File || out[i].File == out[j].File && out[i].Line < out[j].Line
 	})
 	return slices.Compact(out), nil
+}
+
+type export struct{ file, name string }
+
+// carriers returns every module and name that may export the declaration: the file itself, the barrels whose
+// re-exports chain back to it, and each importer under its local name, which a consumer can import only when
+// the importer exports it. `export *` never carries a default; `export default x` and a renamed local export
+// are not followed.
+func (s scan) carriers(file, name string, importers []string) (map[export]bool, error) {
+	carried := map[export]bool{{file, name}: true}
+	for grew := true; grew; {
+		grew = false
+		for _, imp := range importers {
+			isrc, err := s.read(imp)
+			if err != nil {
+				return nil, err
+			}
+			for _, b := range s.Symbols.Bindings(isrc) {
+				to, status := s.Resolver.Resolve(imp, b.Spec)
+				if status != lang.Resolved {
+					continue
+				}
+				for e := range carried {
+					next, ok := export{}, false
+					switch {
+					case e.file != to:
+					case b.Imported == "*" && b.Local == "*" && e.name != "default":
+						next, ok = export{imp, e.name}, true
+					case b.Imported == e.name:
+						next, ok = export{imp, b.Local}, true
+					}
+					if ok && !carried[next] {
+						carried[next], grew = true, true
+					}
+				}
+			}
+		}
+	}
+	return carried, nil
 }
 
 func (s scan) callees(file string, src []byte, d lang.Decl) ([]Callee, error) {

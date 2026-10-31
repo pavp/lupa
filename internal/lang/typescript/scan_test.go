@@ -18,6 +18,7 @@ func TestImports(t *testing.T) {
 		{"multi-line import", "import {\n  a,\n  b,\n} from \"@/lib\";", []string{"@/lib"}},
 		{"export star", `export * from "./Button";`, []string{"./Button"}},
 		{"named re-export", `export { formatDate as fmt } from "./date";`, []string{"./date"}},
+		{"default re-export", `export { default as Button, type Props } from "./Button";`, []string{"./Button"}},
 		{"export type re-export", `export type { User } from "./types";`, []string{"./types"}},
 		{"dynamic import", "const m = await import(\"./Lazy\");", []string{"./Lazy"}},
 		{"require", "const { slug } = require('../utils');", []string{"../utils"}},
