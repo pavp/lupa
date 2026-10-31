@@ -34,6 +34,8 @@ type Anchored struct {
 	Evidence []Evidence
 	// Held is why an investigator did not promote a warning it checked, which stays a note.
 	Held string
+	// Source names the pass that proposed it when that is not the general reviewer: SourceContract.
+	Source string
 	// validation is the orchestrated session's verdict on the comment, nil when it gave none.
 	validation *verdictReply
 }

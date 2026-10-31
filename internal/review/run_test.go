@@ -636,12 +636,42 @@ func TestRunAddsAContractPassForGroupsWithConsumers(t *testing.T) {
 	if len(out.Findings) != 1 || out.Findings[0].Finding.Comment.Claim != "invoice reads a rate no longer written" {
 		t.Fatalf("findings = %+v, want the contract pass's break", out.Findings)
 	}
-	if out.Usage.Calls != 3 || out.Usage.Stages[UsageContract].Calls != 1 {
-		t.Errorf("calls = %d, contract calls = %d; want 2 reviewers and 1 contract pass, only for the group with consumers", out.Usage.Calls, out.Usage.Stages[UsageContract].Calls)
+	if out.Usage.Calls != 4 || out.Usage.Stages[UsageContract].Calls != 1 || f.count(investigateSystem) != 1 {
+		t.Errorf("calls = %d, contract calls = %d, investigator calls = %d; want 2 reviewers, 1 contract pass for the group with consumers and 1 investigator for its finding",
+			out.Usage.Calls, out.Usage.Stages[UsageContract].Calls, f.count(investigateSystem))
+	}
+	if out.Findings[0].Source != SourceContract || out.Findings[0].Finding.Level == verify.LevelNote {
+		t.Errorf("finding source %q level %q, want the contract pass's confirmed break in the main list", out.Findings[0].Source, out.Findings[0].Finding.Level)
 	}
 	for _, p := range general {
 		if strings.Contains(p, "LUPA-DATA consumers") {
 			t.Errorf("the general reviewer got the consumers block; only the contract pass should")
 		}
+	}
+}
+
+func TestRunKeepsAnUnconfirmedContractBreakOutOfTheMainList(t *testing.T) {
+	plan := runPlan(Options{})
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if strings.Contains(prompt, "Check only whether this change breaks code it does not touch") {
+				return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "severe", "invoice reads a rate no longer written", taxQuote, true)), nil
+			}
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}), nil
+			}
+			return answer([]string{"src/cart.ts"}), nil
+		},
+		investigate: func(string) string {
+			return `{"verdict": "refuted", "reasoning": "invoice reads the rate from its own row", "evidence": []}`
+		},
+	}
+	in := f.input(plan)
+	in.Investigate = false
+	in.Consumers = map[string][]reach.Snippet{"lib/tax.ts": {{File: "src/invoice.ts", Line: 4, End: 6, Why: "reads rate (line 5)", Code: "a\nconst r = t.rate;\nb"}}}
+	out := Run(context.Background(), in)
+
+	if len(out.Findings) != 1 || out.Findings[0].Finding.Level != verify.LevelNote || out.Findings[0].Held == "" {
+		t.Errorf("findings = %+v, want the refuted contract break kept as a note with the investigator's reason", out.Findings)
 	}
 }
