@@ -713,3 +713,49 @@ func TestMapListsAMovedFileOnceByItsNewPath(t *testing.T) {
 		t.Errorf("files = %+v, want one entry moved.go from a.go", s.Files)
 	}
 }
+
+func TestSkillInstallWritesTheSkillAndLinksItForClaudeCode(t *testing.T) {
+	home := t.TempDir()
+	run := func() (int, string, string) {
+		var out, errOut bytes.Buffer
+		code := Run([]string{"skill", "install"}, Env{Dir: home, Home: home, Stdout: &out, Stderr: &errOut})
+		return code, out.String(), errOut.String()
+	}
+	for i := range 2 {
+		code, stdout, stderr := run()
+		if code != 0 {
+			t.Fatalf("install %d: exit %d, stderr: %s", i+1, code, stderr)
+		}
+		if !strings.Contains(stdout, filepath.Join(home, ".agents", "skills", "lupa", "SKILL.md")) {
+			t.Errorf("install %d: stdout %q does not name the written skill", i+1, stdout)
+		}
+	}
+	got, err := os.ReadFile(filepath.Join(home, ".agents", "skills", "lupa", "SKILL.md"))
+	if err != nil || !strings.HasPrefix(string(got), "---\nname: lupa\n") {
+		t.Fatalf("skill file = %q, %v; want the lupa skill", got, err)
+	}
+	link := filepath.Join(home, ".claude", "skills", "lupa")
+	if dest, err := os.Readlink(link); err != nil || dest != filepath.Join(home, ".agents", "skills", "lupa") {
+		t.Errorf("%s -> %q, %v; want a link to the written skill", link, dest, err)
+	}
+	if via, err := os.ReadFile(filepath.Join(link, "SKILL.md")); err != nil || string(via) != string(got) {
+		t.Errorf("skill read through the link = %v; want the same file", err)
+	}
+}
+
+func TestSkillInstallNeverReplacesASkillItDidNotWrite(t *testing.T) {
+	home := t.TempDir()
+	mine := filepath.Join(home, ".claude", "skills", "lupa")
+	if err := os.MkdirAll(mine, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, mine, "SKILL.md", "---\nname: lupa\n---\nmy own\n")
+	var out, errOut bytes.Buffer
+	code := Run([]string{"skill", "install"}, Env{Dir: home, Home: home, Stdout: &out, Stderr: &errOut})
+	if code != 2 || !strings.Contains(errOut.String(), mine) {
+		t.Errorf("exit %d, stderr %q; want 2 naming %s", code, errOut.String(), mine)
+	}
+	if got, _ := os.ReadFile(filepath.Join(mine, "SKILL.md")); string(got) != "---\nname: lupa\n---\nmy own\n" {
+		t.Errorf("the user's own skill changed: %q", got)
+	}
+}
