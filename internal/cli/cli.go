@@ -11,11 +11,14 @@ import (
 	"maps"
 	"math"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/agent/claude"
@@ -34,7 +37,7 @@ import (
 	"github.com/pavp/lupa/internal/verify"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n       lupa skill install\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n       lupa skill install\n       lupa doctor\n       lupa --version | --help\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.
@@ -64,6 +67,22 @@ type usageError struct{ msg string }
 
 func (e usageError) Error() string { return e.msg }
 
+// errChecksFailed is reported by doctor when a required tool is missing or not logged in, with exit code 1.
+var errChecksFailed = errors.New("a required check failed")
+
+// Version is set at build time by the release (-X); a go install build reads its module version instead.
+var Version = "dev"
+
+func version() string {
+	if Version != "dev" {
+		return Version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return Version
+}
+
 // errNothingReviewed is reported after the review is saved and shown, with exit code 1.
 var errNothingReviewed = errors.New("no group was reviewed: every agent run failed or answered unusably; see the coverage")
 
@@ -77,7 +96,7 @@ func Run(args []string, env Env) int {
 		} else {
 			fmt.Fprintf(env.Stderr, "lupa: %s\n", err)
 		}
-		if errors.Is(err, errNothingReviewed) {
+		if errors.Is(err, errNothingReviewed) || errors.Is(err, errChecksFailed) {
 			return 1
 		}
 		return 2
@@ -96,6 +115,14 @@ func run(args []string, env Env) error {
 		return runReview(args[1:], env)
 	case "skill":
 		return runSkill(args[1:], env)
+	case "doctor":
+		return runDoctor(env)
+	case "--help", "-h", "help":
+		_, err := fmt.Fprintln(env.Stdout, usage)
+		return err
+	case "--version", "version":
+		_, err := fmt.Fprintf(env.Stdout, "lupa %s\n", version())
+		return err
 	default:
 		return usageError{fmt.Sprintf("unknown command %q", args[0])}
 	}
@@ -119,6 +146,58 @@ func runSkill(args []string, env Env) error {
 	}
 	_, err = fmt.Fprintf(env.Stdout, "Installed the lupa skill:\n  %s\n  %s (link, for Claude Code)\nAsk your agent: /lupa <pr|branch>\n", paths[0], paths[1])
 	return err
+}
+
+// runDoctor checks what lupa needs: git; gh logged in, for PR targets; Claude Code logged in, by one minimal
+// call with a small model and no tools; Pi, optional. A missing required piece makes it exit 1.
+func runDoctor(env Env) error {
+	failed := false
+	line := func(name, status, detail string) {
+		fmt.Fprintf(env.Stdout, "%-8s %s  %s\n", name, status, detail)
+	}
+	tool := func(name string, args ...string) (string, error) {
+		cmd := exec.Command(name, args...)
+		cmd.Dir = env.Dir
+		out, err := cmd.CombinedOutput()
+		return strings.TrimSpace(string(out)), err
+	}
+	if out, err := tool("git", "--version"); err != nil {
+		failed = true
+		line("git", "FAIL", "not found: install git")
+	} else {
+		line("git", "ok", out)
+	}
+	switch _, err := exec.LookPath("gh"); {
+	case err != nil:
+		line("gh", "missing", "needed only for PR targets: install GitHub CLI and run gh auth login")
+	default:
+		if _, err := tool("gh", "auth", "status"); err != nil {
+			line("gh", "missing", "not logged in: run gh auth login (needed only for PR targets)")
+		} else {
+			line("gh", "ok", "logged in")
+		}
+	}
+	ag := env.Agent
+	if ag == nil {
+		ag = claude.Adapter{Model: "claude-haiku-5-5"}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if _, err := ag.Run(ctx, agent.Request{Dir: env.Dir, SystemPrompt: "Reply with the single word ok.", Prompt: "ok", Timeout: 2 * time.Minute}); err != nil {
+		failed = true
+		line("claude", "FAIL", "Claude Code did not answer: "+err.Error()+" (install it and log in)")
+	} else {
+		line("claude", "ok", "Claude Code answered (one minimal call)")
+	}
+	if _, err := exec.LookPath("pi"); err != nil {
+		line("pi", "missing", "optional: only for --agent pi")
+	} else {
+		line("pi", "ok", "found")
+	}
+	if failed {
+		return errChecksFailed
+	}
+	return nil
 }
 
 // parseArgs reads one target, the given boolean flags and the given flags that take a value;
