@@ -62,3 +62,12 @@ func TestReadFirstWhenOtherChangedFilesCallIt(t *testing.T) {
 		}
 	}
 }
+
+func TestIndentationIsBehaviorInSomeFiles(t *testing.T) {
+	// Moving a Python call into an `if` only changes indentation, and changes what runs.
+	files := []File{{Path: "app/jobs.py", Additions: 1, Deletions: 1, WhitespaceOnly: 2}, {Path: "ci.yml", Additions: 2, WhitespaceOnly: 2},
+		{Path: "Makefile", Additions: 1, WhitespaceOnly: 1}, {Path: "src/a.ts", Additions: 3, WhitespaceOnly: 3}}
+	if got := Build(Input{Files: files}).Size.Changed; got != 5 {
+		t.Errorf("changed = %d, want 5: whitespace counts in .py, .yml and Makefile, not in .ts", got)
+	}
+}

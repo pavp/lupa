@@ -3,6 +3,7 @@ package mapping
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -198,7 +199,10 @@ func Build(in Input) Signals {
 		s.Size.Files++
 		s.Size.Additions += f.Additions
 		s.Size.Deletions += f.Deletions
-		s.Size.Changed += f.Additions + f.Deletions - f.WhitespaceOnly
+		s.Size.Changed += f.Additions + f.Deletions
+		if !indentationMatters(f.Path) {
+			s.Size.Changed -= f.WhitespaceOnly
+		}
 	}
 	if in.PR != nil {
 		s.PR = &PRInfo{Number: in.PR.Number, URL: in.PR.URL, Title: in.PR.Title}
@@ -254,7 +258,8 @@ func duplicate(files []File, pr *PR) (Gate, bool) {
 				shared++
 			}
 		}
-		if shared > 0 && 2*shared >= len(own) {
+		// One shared file says little: in a busy repo a small PR shares it with many unrelated ones.
+		if shared >= 2 && 2*shared >= len(own) {
 			name := fmt.Sprintf("PR #%d", o.Number)
 			if o.Title != "" {
 				name += " (" + o.Title + ")"
@@ -288,4 +293,13 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// indentationMatters reports a file whose whitespace changes what runs, so whitespace-only lines are real changes.
+func indentationMatters(p string) bool {
+	switch ext := strings.ToLower(path.Ext(p)); {
+	case ext == ".py" || ext == ".yml" || ext == ".yaml":
+		return true
+	}
+	return strings.EqualFold(path.Base(p), "makefile")
 }
