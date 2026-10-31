@@ -19,7 +19,12 @@ type Comment struct {
 	Fix          string
 	Quote        string
 	QuoteSettles bool
+	// Harm is what a user or caller would see, one of Harms; empty when the agent gave none.
+	Harm string
 }
+
+// Harms are the harm labels a comment may carry; the first four are observable and lead the report.
+var Harms = []string{"wrong_data", "failure", "security", "broken_caller", "slow", "none"}
 
 // Dropped is a comment rejected on its own, by its index in the answer.
 type Dropped struct {
@@ -44,6 +49,7 @@ type rawComment struct {
 	Fix          string `json:"fix"`
 	Quote        string `json:"quote"`
 	QuoteSettles *bool  `json:"quote_settles"`
+	Harm         string `json:"harm"`
 }
 
 var placeholders = []string{"n/a", "na", "none", "todo", "tbd", "tba", "...", "…", "placeholder", "-"}
@@ -94,7 +100,7 @@ func Parse(text string, group []string) (Result, error) {
 		}
 		res.Comments = append(res.Comments, Comment{
 			File: c.File, Severity: c.Severity, Claim: c.Claim, Mechanism: c.Mechanism,
-			Fix: c.Fix, Quote: c.Quote, QuoteSettles: *c.QuoteSettles,
+			Fix: c.Fix, Quote: c.Quote, QuoteSettles: *c.QuoteSettles, Harm: c.Harm,
 		})
 	}
 	return res, nil
@@ -119,6 +125,9 @@ func check(c rawComment, group []string) string {
 	}
 	if c.Severity != "severe" && c.Severity != "warning" {
 		return fmt.Sprintf("severity must be severe or warning, got %q", c.Severity)
+	}
+	if c.Harm != "" && !slices.Contains(Harms, c.Harm) {
+		return fmt.Sprintf("harm must be one of %s, got %q", strings.Join(Harms, ", "), c.Harm)
 	}
 	for _, f := range []struct{ name, value string }{
 		{"claim", c.Claim}, {"mechanism", c.Mechanism}, {"fix", c.Fix}, {"quote", c.Quote},

@@ -197,7 +197,7 @@ func fakeAgent(t *testing.T, reqs *[]agent.Request) *agent.Fake {
 			t.Errorf("unexpected request:\n%s", req.Prompt)
 			return "", nil
 		}
-		return `{"files_inspected": ` + m[1] + `, "comments": [{"file": "b.go", "severity": "severe", "claim": "B is exported mutable state", "mechanism": "any importer can reassign B", "fix": "make B a const", "quote": "var B = 1", "quote_settles": false}]}`, nil
+		return `{"files_inspected": ` + m[1] + `, "comments": [{"file": "b.go", "severity": "warning", "harm": "broken_caller", "claim": "B is exported mutable state", "mechanism": "any importer can reassign B", "fix": "make B a const", "quote": "var B = 1", "quote_settles": false}]}`, nil
 	}}
 }
 
@@ -218,6 +218,7 @@ type reviewOut struct {
 		End       int               `json:"end"`
 		Severity  string            `json:"severity"`
 		Level     string            `json:"level"`
+		Harm      string            `json:"harm"`
 		Causality string            `json:"causality"`
 		Claim     string            `json:"claim"`
 		Quote     string            `json:"quote"`
@@ -309,8 +310,9 @@ func TestReviewRunPipelineByDefault(t *testing.T) {
 			if err := json.Unmarshal([]byte(stdout), &r); err != nil {
 				t.Fatalf("not JSON: %v\n%s", err, stdout)
 			}
-			if len(r.Findings) != 1 || r.Findings[0].File != "b.go" {
-				t.Errorf("findings = %+v, want the b.go finding", r.Findings)
+			// The reviewer called it a warning, but an observable harm puts it in the main list.
+			if len(r.Findings) != 1 || r.Findings[0].File != "b.go" || r.Findings[0].Level != "important" || r.Findings[0].Harm != "broken_caller" {
+				t.Errorf("findings = %+v, want the b.go finding, important, with its harm", r.Findings)
 			}
 			got := map[string]int{}
 			for k, v := range r.Usage.Stages {

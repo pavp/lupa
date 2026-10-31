@@ -93,7 +93,7 @@ A PR is named by its number (`482`, `#482`) or its URL and read through `gh`. He
 The quote gate proves a comment is about real code in the diff, not that it is right or worth reading. Volume is controlled by code, not by asking the model:
 
 - **Severity rubric**: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning. Style is not a candidate. Excluded from the prompt's scope: pre-existing issues, nitpicks, anything a linter catches, general quality or test coverage remarks.
-- **Level derived by code** from severity, evidence class (the quoted lines settle the claim, or it needs inference) and causality. Severity and evidence class are the model's statements, so with investigation on, every comment but a pre-existing follow-up, blocking included, faces an investigator.
+- **Level derived by code** from the harm label (what a user or caller would see: `wrong_data`, `failure`, `security`, `broken_caller` lead the report; `slow` and `none` go to the notes; with no label, the severity decides), evidence class (the quoted lines settle the claim, or it needs inference) and causality. Severity and evidence class are the model's statements, so with investigation on, every comment but a pre-existing follow-up, blocking included, faces an investigator.
 - **Dedupe by code**: same file, overlapping lines and a similar claim merge into one comment.
 - **No caps in v1**: the report shows every comment that passed the gates, ordered by level, severe first. A count cap would hide verified severe issues; whether any limit is needed is decided by measurement, not up front.
 - **Measured**: precision is the stop criterion; noise that survives these controls stops the project before it reaches real PRs.

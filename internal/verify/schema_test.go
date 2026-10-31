@@ -18,6 +18,7 @@ func validComment(file string) map[string]any {
 		"fix":           "initialize the map before writing",
 		"quote":         "\tm[k] = v",
 		"quote_settles": true,
+		"harm":          "failure",
 	}
 }
 
@@ -69,6 +70,7 @@ func TestParseAcceptsValidAnswers(t *testing.T) {
 		Fix:          "initialize the map before writing",
 		Quote:        "\tm[k] = v",
 		QuoteSettles: true,
+		Harm:         "failure",
 	}
 	tests := []struct {
 		name     string
@@ -93,6 +95,12 @@ func TestParseAcceptsValidAnswers(t *testing.T) {
 				t.Errorf("Comments[0] = %+v, want %+v", got.Comments[0], want)
 			}
 		})
+	}
+	// An agent without an answer schema may leave harm out; the level then falls back to severity.
+	noHarm := validComment("src/a.ts")
+	delete(noHarm, "harm")
+	if got, err := Parse(answer(t, group, noHarm), group); err != nil || len(got.Comments) != 1 || got.Comments[0].Harm != "" {
+		t.Errorf("Parse without harm = %+v, %v; want the comment kept with no harm", got, err)
 	}
 }
 
@@ -131,6 +139,7 @@ func TestParseDropsBadCommentsOnTheirOwn(t *testing.T) {
 	}{
 		{"file outside the group", with("file", "src/z.ts"), "file"},
 		{"bad severity", with("severity", "critical"), "severity"},
+		{"bad harm", with("harm", "catastrophic"), "harm"},
 		{"empty claim", with("claim", "  "), "claim"},
 		{"empty mechanism", with("mechanism", ""), "mechanism"},
 		{"empty fix", with("fix", "\n"), "fix"},
