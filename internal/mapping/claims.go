@@ -70,8 +70,10 @@ func claims(body string, files []File, patches map[string]string) []Claim {
 		}
 		for _, text := range sentences(item) {
 			c := Claim{Text: text}
-			for _, cited := range citesOf(text, files) {
-				c.Cites = append(c.Cites, lookUp(cited, files, patches))
+			cited := citesOf(text, files)
+			for i, name := range cited {
+				others := slices.Concat(cited[:i], cited[i+1:])
+				c.Cites = append(c.Cites, lookUp(name, others, files, patches))
 			}
 			if len(c.Cites) == 0 && strings.HasSuffix(text, ":") {
 				continue
@@ -149,12 +151,13 @@ func blank(s string, patterns ...*regexp.Regexp) string {
 	return s
 }
 
-// lookUp finds a cited text as a changed file (also named without its extension), else on the first changed
-// line of the diff, by path order; a code line wins over a comment, which only mentions the name.
-func lookUp(cited string, files []File, patches map[string]string) Cite {
+// lookUp finds a cited text as a changed file (also named without its extension), else on a changed line of
+// the diff: a code line wins over a comment, which only mentions the name; then the line whose hunk points where
+// the claim does, holding more of the claim's other cites (header included, in any case) or lying in a file the
+// claim names; then the first by path order.
+func lookUp(cited string, others []string, files []File, patches map[string]string) Cite {
 	for _, f := range files {
-		base := path.Base(f.Path)
-		if f.Path == cited || strings.HasSuffix(f.Path, "/"+cited) || !strings.ContainsAny(cited, "./") && strings.TrimSuffix(base, path.Ext(base)) == cited {
+		if namesFile(cited, f.Path) {
 			return Cite{Text: cited, Found: true, Path: f.Path}
 		}
 	}
@@ -163,25 +166,63 @@ func lookUp(cited string, files []File, patches map[string]string) Cite {
 		paths = append(paths, p)
 	}
 	slices.Sort(paths)
-	var mention *Cite
+	best, bestRank := Cite{Text: cited}, -1
 	for _, p := range paths {
-		for _, l := range verify.ChangedLines(patches[p]) {
-			if !holdsToken(l.Text, cited) {
-				continue
-			}
-			c := Cite{Text: cited, Found: true, Path: p, Side: l.Side, Line: l.N, Code: l.Text}
-			if !isComment(l.Text) {
-				return c
-			}
-			if mention == nil {
-				mention = &c
+		for _, h := range hunks(patches[p]) {
+			rank := pointedAt(p, h, others)
+			for _, l := range verify.ChangedLines(h) {
+				if !holdsToken(l.Text, cited) {
+					continue
+				}
+				r := rank
+				if !isComment(l.Text) {
+					r += len(others) + 1
+				}
+				if r > bestRank {
+					best, bestRank = Cite{Text: cited, Found: true, Path: p, Side: l.Side, Line: l.N, Code: l.Text}, r
+				}
 			}
 		}
 	}
-	if mention != nil {
-		return *mention
+	return best
+}
+
+// pointedAt counts the other cites of a claim that point at this hunk of path: a cite naming the file, or a
+// cite the hunk holds, its header included, in any case.
+func pointedAt(path, hunk string, others []string) int {
+	lower := strings.ToLower(hunk)
+	n := 0
+	for _, o := range others {
+		if namesFile(o, path) || holdsToken(lower, strings.ToLower(o)) {
+			n++
+		}
 	}
-	return Cite{Text: cited}
+	return n
+}
+
+func namesFile(cited, p string) bool {
+	base := path.Base(p)
+	return p == cited || strings.HasSuffix(p, "/"+cited) || !strings.ContainsAny(cited, "./") && strings.TrimSuffix(base, path.Ext(base)) == cited
+}
+
+// hunks splits a unified diff into its hunks, each with its `@@` header.
+func hunks(patch string) []string {
+	var out []string
+	var cur []string
+	for _, l := range strings.Split(patch, "\n") {
+		if strings.HasPrefix(l, "@@") {
+			if cur != nil {
+				out = append(out, strings.Join(cur, "\n"))
+			}
+			cur = []string{l}
+		} else if cur != nil {
+			cur = append(cur, l)
+		}
+	}
+	if cur != nil {
+		out = append(out, strings.Join(cur, "\n"))
+	}
+	return out
 }
 
 // isComment reports a line that is only a comment in the common line and block comment syntaxes.
