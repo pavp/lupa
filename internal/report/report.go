@@ -36,6 +36,7 @@ func Markdown(s mapping.Signals) []byte {
 	var oneWayAt []string
 	for _, f := range s.Files {
 		switch {
+		case f.Risk == mapping.OneWayDoor && slices.ContainsFunc(s.RemovedExports, func(r mapping.RemovedExport) bool { return r.File == f.Path }):
 		case f.Risk == mapping.OneWayDoor:
 			oneWay = append(oneWay, f.Path)
 			oneWayAt = append(oneWayAt, at(f.Path, f.FirstLine))
@@ -48,6 +49,9 @@ func Markdown(s mapping.Signals) []byte {
 	}
 	for _, p := range oneWay {
 		fmt.Fprintf(&b, "- Rollback: one-way door in `%s`\n", p)
+	}
+	for _, r := range s.RemovedExports {
+		fmt.Fprintf(&b, "- Rollback: `%s` removes exported `%s`, still imported at %s\n", r.File, r.Name, codes(r.Users))
 	}
 	for _, f := range s.Files {
 		switch {
@@ -62,6 +66,17 @@ func Markdown(s mapping.Signals) []byte {
 	}
 	for _, u := range s.Unresolved {
 		fmt.Fprintf(&b, "- Unresolved imports: `%s` imports `%s`\n", u.From, u.Specifier)
+	}
+	if n := len(s.SilencedErrors); n > 0 {
+		var where []string
+		for _, e := range s.SilencedErrors[:min(n, 5)] {
+			where = append(where, fmt.Sprintf("`%s`", at(e.File, e.Line)))
+		}
+		more := ""
+		if n > 5 {
+			more = fmt.Sprintf(" and %d more", n-5)
+		}
+		fmt.Fprintf(&b, "- Error detection: %d %s an error: %s%s\n", n, plural(n, "place swallows", "places swallow"), strings.Join(where, ", "), more)
 	}
 	if len(s.NotAnalyzed) > 0 {
 		fmt.Fprintf(&b, "- Impact not analyzed for `%s` files: imports and call sites are followed for TS/JS only\n", strings.Join(s.NotAnalyzed, "`, `"))
@@ -105,6 +120,9 @@ func Markdown(s mapping.Signals) []byte {
 	for _, p := range oneWayAt {
 		questions = append(questions, fmt.Sprintf("`%s` is hard to roll back: what is the rollback plan?", p))
 	}
+	for _, r := range s.RemovedExports {
+		questions = append(questions, fmt.Sprintf("`%s` removes exported `%s`, still imported at `%s`: are those imports updated in another change?", r.File, r.Name, r.Users[0]))
+	}
 	for _, f := range s.Files {
 		switch {
 		case len(f.CallSites) > 0:
@@ -117,6 +135,9 @@ func Markdown(s mapping.Signals) []byte {
 	}
 	for _, u := range s.Unresolved {
 		questions = append(questions, fmt.Sprintf("`%s` imports `%s`, which is not in the repo: is a file missing from this change?", at(u.From, u.Line), u.Specifier))
+	}
+	for _, e := range s.SilencedErrors[:min(len(s.SilencedErrors), 3)] {
+		questions = append(questions, fmt.Sprintf("`%s` swallows an error: is that intended, and how would a failure show up?", at(e.File, e.Line)))
 	}
 	for _, m := range s.TestsNotImportingSubject {
 		questions = append(questions, fmt.Sprintf("`%s` is named like a test of `%s` but does not import it: does it exercise it?", at(m.Test, m.Line), m.Subject))
