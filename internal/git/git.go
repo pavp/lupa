@@ -253,11 +253,11 @@ func (b *BlobReader) Read(path string) ([]byte, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if _, err := fmt.Fprintf(b.stdin, "%s:%s\n", b.rev, path); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s:%s: %w", b.rev, path, err)
 	}
 	header, err := b.out.ReadString('\n')
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s:%s: %w", b.rev, path, err)
 	}
 	fields := strings.Fields(header)
 	if len(fields) != 3 {
@@ -269,7 +269,7 @@ func (b *BlobReader) Read(path string) ([]byte, error) {
 	}
 	content := make([]byte, size+1)
 	if _, err := io.ReadFull(b.out, content); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("%s:%s: %w", b.rev, path, err)
 	}
 	return content[:size], nil
 }

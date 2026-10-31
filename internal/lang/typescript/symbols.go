@@ -37,7 +37,32 @@ func Decls(src []byte) []lang.Decl {
 			out = append(out, d)
 		}
 	}
-	return out
+	return defaultByName(out, toks, starts)
+}
+
+// defaultByName turns `export default name;` into the default mark of the declaration called name, so
+// importers of the default reach that declaration instead of a one-line placeholder.
+func defaultByName(decls []lang.Decl, toks []token, starts []int) []lang.Decl {
+	for k, s := range starts {
+		end := len(toks)
+		if k+1 < len(starts) {
+			end = starts[k+1]
+		}
+		stmt := toks[s:end]
+		if len(stmt) > 0 && stmt[len(stmt)-1].is(punct, ";") {
+			stmt = stmt[:len(stmt)-1]
+		}
+		if len(stmt) != 3 || !stmt[0].is(ident, "export") || !stmt[1].is(ident, "default") || stmt[2].kind != ident {
+			continue
+		}
+		i := slices.IndexFunc(decls, func(d lang.Decl) bool { return d.Name == stmt[2].text && !d.Default })
+		if i < 0 {
+			continue
+		}
+		decls[i].Default = true
+		decls = slices.DeleteFunc(decls, func(d lang.Decl) bool { return d.Name == "default" && d.Line == stmt[0].line })
+	}
+	return decls
 }
 
 func statements(toks []token) []int {

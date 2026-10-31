@@ -19,6 +19,7 @@ func TestDecls(t *testing.T) {
 		{"class with members", "export class Store {\n  get(k) {\n    return this.m[k];\n  }\n}\n", []lang.Decl{{Name: "Store", Line: 1, End: 5}}},
 		{"default function", "export default function handler(req) {\n  return req;\n}\n", []lang.Decl{{Name: "handler", Default: true, Line: 1, End: 3}}},
 		{"default expression", "const x = 1;\nexport default {\n  x,\n};\n", []lang.Decl{{Name: "x", Line: 1, End: 1}, {Name: "default", Default: true, Line: 2, End: 4}}},
+		{"a default export of a declared name makes that declaration the default", "async function handler(req) {\n  return req;\n}\n\nexport default handler;\n", []lang.Decl{{Name: "handler", Default: true, Line: 1, End: 3}}},
 		{"types and enums", "export interface User {\n  id: string;\n}\ntype Id =\n  | string\n  | number;\nexport enum Role { Admin }\n", []lang.Decl{{Name: "User", Line: 1, End: 3}, {Name: "Id", Line: 4, End: 6}, {Name: "Role", Line: 7, End: 7}}},
 		{"nested declarations are not top level", "function outer() {\n  const inner = 1;\n  function deep() {}\n}\n", []lang.Decl{{Name: "outer", Line: 1, End: 4}}},
 		{"template and comment do not shift lines", "const s = `a\n${ {b: 1}.b }\nc`;\n/* x\n y */\nfunction f() {}\n", []lang.Decl{{Name: "s", Line: 1, End: 3}, {Name: "f", Line: 6, End: 6}}},

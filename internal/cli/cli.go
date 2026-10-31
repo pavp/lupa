@@ -20,6 +20,7 @@ import (
 	"github.com/pavp/lupa/internal/agent/pi"
 	"github.com/pavp/lupa/internal/forge/github"
 	"github.com/pavp/lupa/internal/git"
+	"github.com/pavp/lupa/internal/lang"
 	"github.com/pavp/lupa/internal/lang/typescript"
 	"github.com/pavp/lupa/internal/mapping"
 	"github.com/pavp/lupa/internal/owners"
@@ -123,40 +124,87 @@ func parseArgs(args []string, flags map[string]*bool, values map[string]*string)
 
 // mapChange resolves the target to a commit range and builds the map's signals for it. key names
 // the target in the store: the target itself, or pr-<n> for a pull request in any of its forms.
-func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, key string, err error) {
+func mapChange(env Env, target string) (m mapped, err error) {
 	t, err := resolveTarget(env, target)
-	repo, key = t.repo, t.key
-	base, head := t.base, t.head
+	m.repo, m.key = t.repo, t.key
+	repo, base, head := t.repo, t.base, t.head
 	if err != nil {
-		return repo, mapping.Signals{}, "", err
+		return m, err
 	}
 	changes, err := repo.NumStat(base, head)
 	if err != nil {
-		return repo, mapping.Signals{}, "", err
+		return m, err
 	}
 	firstLines, err := repo.FirstChangedLines(base, head)
 	if err != nil {
-		return repo, mapping.Signals{}, "", err
+		return m, err
 	}
 	files := make([]mapping.File, len(changes))
 	for i, c := range changes {
 		files[i] = mapping.File{Path: c.Path, OldPath: c.OldPath, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary, FirstLine: firstLines[c.Path],
 			WhitespaceOnly: max(0, c.Additions+c.Deletions-c.Authored)}
 	}
-	r, err := reachOf(repo, head, files)
+	view, closeView, err := openHead(repo, head, files)
 	if err != nil {
-		return repo, mapping.Signals{}, "", err
+		return m, err
 	}
-	patches, err := repo.Patches(base, head)
+	defer closeView()
+	r := reachOf(view, files)
+	if m.patches, err = repo.Patches(base, head); err != nil {
+		return m, err
+	}
+	if m.symbols, err = symbolsOf(view, m.patches); err != nil {
+		return m, err
+	}
+	r.Calls, r.ChangedCallers = callSitesOf(m.symbols, files)
+	m.signals = mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t), Patches: m.patches})
+	return m, nil
+}
+
+// mapped is a mapped change: the repo and store key, the map's signals, and the patches and changed
+// declarations a review reuses instead of reading them again.
+type mapped struct {
+	repo    git.Repo
+	key     string
+	signals mapping.Signals
+	patches map[string]string
+	symbols map[string][]reach.Symbol
+}
+
+// headView is the head commit as the map reads it, opened once per run: its files, a blob reader, and the
+// resolver and import graph of the analyzed language.
+type headView struct {
+	all      []string
+	read     func(string) ([]byte, error)
+	resolver lang.Resolver
+	graph    reach.Graph
+}
+
+// openHead builds the head view when the change touches an analyzed language; nil otherwise.
+func openHead(repo git.Repo, head string, files []mapping.File) (*headView, func() error, error) {
+	provider := typescript.Provider{}
+	if !slices.ContainsFunc(files, func(f mapping.File) bool { return provider.Owns(f.Path) }) {
+		return nil, func() error { return nil }, nil
+	}
+	all, err := repo.Files(head)
 	if err != nil {
-		return repo, mapping.Signals{}, "", err
+		return nil, nil, err
 	}
-	syms, err := symbolsOf(repo, head, patches)
+	blobs, err := repo.Reader(head)
 	if err != nil {
-		return repo, mapping.Signals{}, "", err
+		return nil, nil, err
 	}
-	r.Calls, r.ChangedCallers = callSitesOf(syms, files)
-	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t), Patches: patches}), key, nil
+	resolver, err := provider.NewResolver(all, blobs.Read)
+	if err != nil {
+		blobs.Close()
+		return nil, nil, fmt.Errorf("reach: %w", err)
+	}
+	g, err := reach.BuildWith(all, blobs.Read, provider, resolver)
+	if err != nil {
+		blobs.Close()
+		return nil, nil, fmt.Errorf("reach: %w", err)
+	}
+	return &headView{all: all, read: blobs.Read, resolver: resolver, graph: g}, blobs.Close, nil
 }
 
 func runMap(args []string, env Env) error {
@@ -165,10 +213,11 @@ func runMap(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	repo, signals, key, err := mapChange(env, target)
+	m, err := mapChange(env, target)
 	if err != nil {
 		return err
 	}
+	repo, signals, key := m.repo, m.signals, m.key
 	head := signals.Head
 	gitDir, err := repo.GitDir()
 	if err != nil {
@@ -403,14 +452,11 @@ func runReview(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	repo, signals, key, err := mapChange(env, target)
+	m, err := mapChange(env, target)
 	if err != nil {
 		return err
 	}
-	patches, err := repo.Patches(signals.Base, signals.Head)
-	if err != nil {
-		return err
-	}
+	repo, signals, key, patches := m.repo, m.signals, m.key, m.patches
 	conventions := conventionsOf(repo, signals.Base)
 	empty := review.BuildPrompt(review.PromptInput{Conventions: conventions})
 	plan := review.Plan(signals.Files, patches, review.Options{Overhead: len(empty.System) + len(empty.User)})
@@ -467,10 +513,7 @@ func runReview(args []string, env Env) error {
 			importers[f.Path] = f.DirectImporters
 		}
 	}
-	symbols, err := symbolsOf(repo, signals.Head, patches)
-	if err != nil {
-		return err
-	}
+	symbols := m.symbols
 	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate,
 		Sentences: sentences, ClaimPatches: claimPatches})
 	if err != nil {
@@ -619,30 +662,15 @@ func plural(n int, one, many string) string {
 
 // reachOf builds the import graph at head and keeps, per changed file, its importers outside the change
 // and the imports of changed files that do not resolve. It reads nothing when no changed file is TS/JS.
-func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach, error) {
-	provider := typescript.Provider{}
+func reachOf(view *headView, changed []mapping.File) mapping.Reach {
+	if view == nil {
+		return mapping.Reach{}
+	}
 	inChange := map[string]bool{}
-	owned := false
 	for _, f := range changed {
 		inChange[f.Path] = true
-		owned = owned || provider.Owns(f.Path)
 	}
-	if !owned {
-		return mapping.Reach{}, nil
-	}
-	all, err := repo.Files(head)
-	if err != nil {
-		return mapping.Reach{}, err
-	}
-	blobs, err := repo.Reader(head)
-	if err != nil {
-		return mapping.Reach{}, err
-	}
-	defer blobs.Close()
-	g, err := reach.Build(all, blobs.Read, provider)
-	if err != nil {
-		return mapping.Reach{}, fmt.Errorf("reach: %w", err)
-	}
+	g := view.graph
 	out := mapping.Reach{Importers: map[string][]string{}, Direct: map[string][]string{}, Imports: map[string][]string{}}
 	for _, f := range changed {
 		if imps, ok := g.Imports[f.Path]; ok {
@@ -669,12 +697,12 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 			out.Ignored = append(out.Ignored, mapping.Unresolved{From: u.From, Specifier: u.Specifier, Line: u.Line})
 		}
 	}
-	return out, nil
+	return out
 }
 
 // symbolsOf finds, at head, the TS/JS declarations the patches add lines to, with their callers and callees,
 // by path. It reads nothing when no patch adds a line to a TS/JS file.
-func symbolsOf(repo git.Repo, head string, patches map[string]string) (map[string][]reach.Symbol, error) {
+func symbolsOf(view *headView, patches map[string]string) (map[string][]reach.Symbol, error) {
 	provider := typescript.Provider{}
 	added := map[string][]int{}
 	for path, patch := range patches {
@@ -682,31 +710,19 @@ func symbolsOf(repo git.Repo, head string, patches map[string]string) (map[strin
 			added[path] = lines
 		}
 	}
-	if len(added) == 0 {
+	if len(added) == 0 || view == nil {
 		return nil, nil
 	}
-	all, err := repo.Files(head)
-	if err != nil {
-		return nil, err
-	}
-	blobs, err := repo.Reader(head)
-	if err != nil {
-		return nil, err
-	}
-	defer blobs.Close()
-	g, err := reach.Build(all, blobs.Read, provider)
+	syms, err := reach.ChangedSymbols(reach.SymbolInput{Graph: view.graph, Added: added, ReadFile: view.read, Symbols: provider, Resolver: view.resolver})
 	if err != nil {
 		return nil, fmt.Errorf("symbols: %w", err)
 	}
-	resolver, err := provider.NewResolver(all, blobs.Read)
-	if err != nil {
-		return nil, fmt.Errorf("symbols: %w", err)
-	}
-	syms, err := reach.ChangedSymbols(reach.SymbolInput{Graph: g, Added: added, ReadFile: blobs.Read, Symbols: provider, Resolver: resolver})
-	if err != nil {
-		return nil, fmt.Errorf("symbols: %w", err)
-	}
+	// A file whose added lines touch no declaration (an import-only edit) was still analyzed: it has no call
+	// sites, and must not fall back to counting its importers.
 	out := map[string][]reach.Symbol{}
+	for path := range added {
+		out[path] = nil
+	}
 	for _, sym := range syms {
 		out[sym.File] = append(out[sym.File], sym)
 	}
@@ -916,6 +932,11 @@ func resolveRange(repo git.Repo, target string) (base, head string, err error) {
 	}
 	if base, err = repo.MergeBase(fromCommit, head); err != nil {
 		return "", "", err
+	}
+	if repo.Blobless() {
+		if err := repo.Prefetch(head); err != nil {
+			return "", "", fmt.Errorf("prefetch %s: %w", head, err)
+		}
 	}
 	return base, head, nil
 }
