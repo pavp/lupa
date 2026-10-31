@@ -8,9 +8,11 @@ const (
 		`"comments":{"type":"array","items":{"type":"object","properties":{` +
 		`"file":{"type":"string"},"severity":{"type":"string","enum":["severe","warning"]},` +
 		`"claim":{"type":"string"},"mechanism":{"type":"string"},"fix":{"type":"string"},` +
-		`"quote":{"type":"string"},"quote_settles":{"type":"boolean"}},` +
-		`"required":["file","severity","claim","mechanism","fix","quote","quote_settles"],"additionalProperties":false}}},` +
+		`"quote":{"type":"string"},"quote_settles":{"type":"boolean"},` + harmProperty + `},` +
+		`"required":["file","severity","claim","mechanism","fix","quote","quote_settles","harm"],"additionalProperties":false}}},` +
 		`"required":["files_inspected","comments"],"additionalProperties":false}`
+
+	harmProperty = `"harm":{"type":"string","enum":["wrong_data","failure","security","broken_caller","slow","none"]}`
 
 	relocateSchema = `{"type":"object","properties":{"quote":{"type":"string"}},"required":["quote"],"additionalProperties":false}`
 
@@ -25,8 +27,8 @@ const (
 		`"comments":{"type":"array","items":{"type":"object","properties":{` +
 		`"file":{"type":"string"},"severity":{"type":"string","enum":["severe","warning"]},` +
 		`"claim":{"type":"string"},"mechanism":{"type":"string"},"fix":{"type":"string"},` +
-		`"quote":{"type":"string"},"quote_settles":{"type":"boolean"},"validation":` + investigateSchema + `},` +
-		`"required":["file","severity","claim","mechanism","fix","quote","quote_settles"],"additionalProperties":false}}},` +
+		`"quote":{"type":"string"},"quote_settles":{"type":"boolean"},` + harmProperty + `,"validation":` + investigateSchema + `},` +
+		`"required":["file","severity","claim","mechanism","fix","quote","quote_settles","harm"],"additionalProperties":false}}},` +
 		`"required":["id","files_inspected","comments"],"additionalProperties":false}}},"required":["groups"],"additionalProperties":false}`
 
 	claimsSchema = `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","properties":{` +

@@ -48,7 +48,8 @@ func TestBuildPromptUserContent(t *testing.T) {
 	user := BuildPrompt(promptInput()).User
 	for _, want := range []string{
 		"List every candidate defect this change could introduce",
-		"Do not filter: Lupa puts severe candidates in the main list and warnings in a separate list below it",
+		"Do not filter: Lupa puts candidates with an observable harm in the main list and the rest in a separate list below it",
+		`"harm": "wrong_data"|"failure"|"security"|"broken_caller"|"slow"|"none"`,
 		"expect about 5 to 10 candidates per group", "read callers and callees with your tools",
 		"Severity: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning.",
 		"Style is not a candidate.",

@@ -88,8 +88,12 @@ func addedLines(patch string) (added, inHunk map[int]bool, hasHunks bool) {
 	return added, inHunk, hasHunks
 }
 
-// Level derives a comment's level from its severity, evidence class and
-// causality only, so the model cannot promote its own comment.
+// Observable reports a harm a user or caller would see: wrong data, a failure, a security hole or a broken caller.
+func Observable(harm string) bool { return slices.Contains(Harms[:4], harm) }
+
+// Level derives a comment's level from its severity, evidence class and causality only, so the model
+// cannot promote its own comment by its wording. The harm label does not decide it: the reviewer gives
+// almost every candidate an observable harm, which in measurement tripled the main list and its wrong items.
 func Level(c Comment, causality string) string {
 	switch {
 	case causality == CausalityPreExisting:

@@ -63,6 +63,36 @@ func TestCausality(t *testing.T) {
 	}
 }
 
+func TestLevelIgnoresHarm(t *testing.T) {
+	tests := []struct {
+		harm, severity string
+		want           string
+	}{
+		{"failure", "warning", LevelNote},
+		{"none", "severe", LevelBlocking},
+		{"", "severe", LevelBlocking},
+	}
+	for _, tt := range tests {
+		c := Comment{Harm: tt.harm, Severity: tt.severity, QuoteSettles: true}
+		if got := Level(c, CausalityIntroduced); got != tt.want {
+			t.Errorf("Level(harm %q, %s) = %q, want %q", tt.harm, tt.severity, got, tt.want)
+		}
+	}
+}
+
+func TestObservable(t *testing.T) {
+	for _, h := range []string{"wrong_data", "failure", "security", "broken_caller"} {
+		if !Observable(h) {
+			t.Errorf("Observable(%q) = false, want true", h)
+		}
+	}
+	for _, h := range []string{"slow", "none", ""} {
+		if Observable(h) {
+			t.Errorf("Observable(%q) = true, want false", h)
+		}
+	}
+}
+
 func TestLevel(t *testing.T) {
 	tests := []struct {
 		severity  string

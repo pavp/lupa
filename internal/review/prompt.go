@@ -46,13 +46,14 @@ const taskSection = `# Task
 
 Review the change in the change block below and report the defects it introduces.
 
-List every candidate defect this change could introduce: wrong logic, a missed case, a broken contract with code that calls or is called by the changed code, state or ordering bugs. Do not filter: Lupa puts severe candidates in the main list and warnings in a separate list below it, so a defect you leave out is lost while a wrong warning costs little. When the change has logic, expect about 5 to 10 candidates per group. A defect can need another file to see; read callers and callees with your tools. Severity: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning. Style is not a candidate.
+List every candidate defect this change could introduce: wrong logic, a missed case, a broken contract with code that calls or is called by the changed code, state or ordering bugs. Do not filter: Lupa puts candidates with an observable harm in the main list and the rest in a separate list below it, so a defect you leave out is lost while a wrong minor candidate costs little. When the change has logic, expect about 5 to 10 candidates per group. A defect can need another file to see; read callers and callees with your tools. Severity: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning. Style is not a candidate.
 
 Exclusions: do not report pre-existing issues, nitpicks, anything a linter catches, general quality or test coverage remarks.
 
 Output: reply with ONE JSON object and nothing else:
-{"files_inspected": [<every path of this group>], "comments": [{"file": "<path>", "severity": "severe"|"warning", "claim": "<what is wrong>", "mechanism": "<how it breaks: input, path, condition>", "fix": "<one concrete change>", "quote": "<the exact code lines the claim is about, copied verbatim from the change including indentation; several consecutive lines allowed>", "quote_settles": true|false}]}
+{"files_inspected": [<every path of this group>], "comments": [{"file": "<path>", "severity": "severe"|"warning", "claim": "<what is wrong>", "mechanism": "<how it breaks: input, path, condition>", "fix": "<one concrete change>", "quote": "<the exact code lines the claim is about, copied verbatim from the change including indentation; several consecutive lines allowed>", "quote_settles": true|false, "harm": "wrong_data"|"failure"|"security"|"broken_caller"|"slow"|"none"}]}
 Set quote_settles to true only when the quoted lines alone prove the claim.
+Set harm to what a user or caller would see if it happens: wrong_data (wrong or lost data, a wrong result), failure (a crash, an error, a hang, a request that fails), security (access or data exposed), broken_caller (code that calls or is called by the change breaks), slow (a performance cost), none (style, naming, logging, docs, maintainability).
 An empty ` + "`comments`" + ` list is right only when the change has no logic that could break.
 `
 

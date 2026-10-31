@@ -168,16 +168,38 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	}
 	candidates := slices.DeleteFunc(slices.Clone(merged), followUp)
 	var inv InvestigateResult
+	promoted, held := map[verify.Finding][]Evidence{}, map[verify.Finding]string{}
 	switch {
 	case in.Orchestrate:
 		inv = validate(candidates, in.Head)
 	case !in.Investigate:
+		// A warning with an observable harm is where the reviewer leaves real defects it was unsure of, so an
+		// investigator checks those alone; a confirmed one joins the main list, any other stays a note.
+		var doubtful []Anchored
 		for _, c := range candidates {
 			inv.Confirmed = append(inv.Confirmed, Investigated{Finding: c})
+			if c.Finding.Level == verify.LevelNote && verify.Observable(c.Finding.Comment.Harm) {
+				doubtful = append(doubtful, c)
+			}
+		}
+		if len(doubtful) > 0 {
+			checked := Investigate(ctx, InvestigateInput{Agent: ag.at(UsageInvestigate), Dir: in.Dir, Timeout: in.Timeout, Findings: doubtful,
+				Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
+			for _, c := range checked.Confirmed {
+				promoted[c.Finding.Finding] = c.Evidence
+			}
+			for _, c := range slices.Concat(checked.Refuted, checked.Unconfirmed) {
+				held[c.Finding.Finding] = c.Reason
+			}
 		}
 	default:
 		inv = Investigate(ctx, InvestigateInput{Agent: ag.at(UsageInvestigate), Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
 			Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
+		for _, c := range inv.Confirmed {
+			if c.Finding.Finding.Level == verify.LevelNote && verify.Observable(c.Finding.Finding.Comment.Harm) {
+				promoted[c.Finding.Finding] = c.Evidence
+			}
+		}
 	}
 	confirmed := inv.Confirmed
 	for _, f := range merged {
@@ -186,6 +208,10 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			out.Findings = append(out.Findings, f)
 		case len(confirmed) > 0 && confirmed[0].Finding.Finding == f.Finding:
 			f.Evidence = confirmed[0].Evidence
+			if ev, ok := promoted[f.Finding]; ok {
+				f.Finding.Level, f.Evidence = verify.LevelImportant, ev
+			}
+			f.Held = held[f.Finding]
 			out.Findings = append(out.Findings, f)
 			confirmed = confirmed[1:]
 		}
