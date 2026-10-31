@@ -44,11 +44,15 @@ var (
 	filePath   = regexp.MustCompile(`(?:[\w.-]+/)+[\w.-]*\.[A-Za-z0-9]+`)
 	fileName   = regexp.MustCompile(`[\w-]+\.[A-Za-z][A-Za-z0-9]*`)
 	listMarker = regexp.MustCompile(`^\s*(?:>\s*)*(?:[-*+]|\d+[.)])\s+`)
+	// templateField is a bold label filled in from a PR template, such as `**Environment**: Staging`.
+	templateField = regexp.MustCompile(`^\*\*[^*]+\*\*\s*:`)
+	issueLinks    = regexp.MustCompile(`(?i)^(?:(?:fix|fixe[sd]|close[sd]?|resolve[sd]?|refs?|related to)\s+)?#\d+(?:\s*,\s*#\d+)*\.?$`)
 )
 
 // claims cuts the description into sentences and list items, skipping HTML comments, headings,
-// checkboxes, fenced code and lines that open with an HTML tag, such as a <details> block's markup,
-// and looks up every code span and path each one cites in the diff.
+// checkboxes, fenced code, lines that open with an HTML tag, such as a <details> block's markup,
+// template fields, issue links and a lead-in to a list that cites nothing, and looks up every code
+// span and path each one cites in the diff.
 func claims(body string, files []File, patches map[string]string) []Claim {
 	var out []Claim
 	fenced := false
@@ -60,10 +64,17 @@ func claims(body string, files []File, patches map[string]string) []Claim {
 		if fenced || boilerplate.MatchString(line) || strings.HasPrefix(strings.TrimSpace(line), "<") {
 			continue
 		}
-		for _, text := range sentences(listMarker.ReplaceAllString(line, "")) {
+		item := strings.TrimSpace(listMarker.ReplaceAllString(line, ""))
+		if templateField.MatchString(item) || issueLinks.MatchString(item) {
+			continue
+		}
+		for _, text := range sentences(item) {
 			c := Claim{Text: text}
 			for _, cited := range citesOf(text, files) {
 				c.Cites = append(c.Cites, lookUp(cited, files, patches))
+			}
+			if len(c.Cites) == 0 && strings.HasSuffix(text, ":") {
+				continue
 			}
 			out = append(out, c)
 		}
@@ -71,7 +82,8 @@ func claims(body string, files []File, patches map[string]string) []Claim {
 	return out
 }
 
-// sentences splits a line after `.`, `!` or `?` followed by a space, never inside a code span.
+// sentences splits a line after `.`, `!` or `?` followed by a space, never inside a code span nor before a
+// lowercase letter, which follows an abbreviation such as "max." rather than a sentence end.
 func sentences(line string) []string {
 	var out []string
 	start, inCode := 0, false
@@ -79,7 +91,7 @@ func sentences(line string) []string {
 		switch {
 		case line[i] == '`':
 			inCode = !inCode
-		case !inCode && strings.ContainsRune(".!?", rune(line[i])) && i+1 < len(line) && line[i+1] == ' ':
+		case !inCode && strings.ContainsRune(".!?", rune(line[i])) && i+1 < len(line) && line[i+1] == ' ' && !startsLower(line[i+1:]):
 			out = appendSentence(out, line[start:i+1])
 			start = i + 1
 		}
@@ -202,4 +214,9 @@ func holdsToken(line, s string) bool {
 
 func isIdent(c byte) bool {
 	return c == '_' || c == '$' || '0' <= c && c <= '9' || 'a' <= c && c <= 'z' || 'A' <= c && c <= 'Z'
+}
+
+func startsLower(s string) bool {
+	s = strings.TrimLeft(s, " ")
+	return s != "" && s[0] >= 'a' && s[0] <= 'z'
 }

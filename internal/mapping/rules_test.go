@@ -24,6 +24,7 @@ func TestClassify(t *testing.T) {
 		{"requirements-dev.txt", ReadFirst, Impact},
 		{"src/user.test.ts", Test, Verification},
 		{"src/user.spec.tsx", Test, Verification},
+		{"packages/features/bookings/webhook.e2e.ts", Test, Verification},
 		{"internal/cli/cli_test.go", Test, Verification},
 		{"tests/test_user.py", Test, Verification},
 		{"src/__tests__/user.ts", Test, Verification},

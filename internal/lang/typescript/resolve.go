@@ -42,6 +42,7 @@ type Resolver struct {
 	files      map[string]bool
 	configs    map[string]*config
 	workspaces []workspacePkg
+	ignore     []ignoreRule
 }
 
 // NewResolver builds a resolver over the repo's files; readFile reads a repo-relative file.
@@ -59,6 +60,7 @@ func NewResolver(files []string, readFile func(path string) ([]byte, error)) (*R
 			return nil, err
 		}
 	}
+	r.ignore = ignoreRules(sorted, readFile)
 	var err error
 	if r.workspaces, err = loadWorkspaces(sorted, readFile); err != nil {
 		return nil, err
@@ -119,7 +121,7 @@ func (r *Resolver) Resolve(from, spec string) (string, Status) {
 }
 
 // target resolves the path p to a source file, or reports it External when only a declaration file exists
-// there, so a types-only import is never reported as a missing file.
+// there or git ignores it (a generated module), so neither is reported as a missing file.
 func (r *Resolver) target(p string) (string, Status) {
 	if f := r.file(p); f != "" {
 		return f, Resolved
@@ -129,6 +131,9 @@ func (r *Resolver) target(p string) (string, Status) {
 		if strings.HasSuffix(f, ".d.ts") && r.files[f] {
 			return "", External
 		}
+	}
+	if r.generated(p) {
+		return "", External
 	}
 	return "", Unresolved
 }
@@ -322,4 +327,16 @@ func stripJSONC(src []byte) []byte {
 		}
 	}
 	return out
+}
+
+func (r *Resolver) generated(p string) bool {
+	if ignored(r.ignore, p) {
+		return true
+	}
+	for _, e := range codeExts {
+		if ignored(r.ignore, p+e) {
+			return true
+		}
+	}
+	return false
 }
