@@ -154,7 +154,7 @@ func blank(s string, patterns ...*regexp.Regexp) string {
 // lookUp finds a cited text as a changed file (also named without its extension), else on a changed line of
 // the diff: a code line wins over a comment, which only mentions the name; then the line whose hunk points where
 // the claim does, holding more of the claim's other cites (header included, in any case) or lying in a file the
-// claim names; then the first by path order.
+// claim names; then a line that declares the name over one that uses it; then the first by path order.
 func lookUp(cited string, others []string, files []File, patches map[string]string) Cite {
 	for _, f := range files {
 		if namesFile(cited, f.Path) {
@@ -169,14 +169,17 @@ func lookUp(cited string, others []string, files []File, patches map[string]stri
 	best, bestRank := Cite{Text: cited}, -1
 	for _, p := range paths {
 		for _, h := range hunks(patches[p]) {
-			rank := pointedAt(p, h, others)
+			rank := 2 * pointedAt(p, h, others)
 			for _, l := range verify.ChangedLines(h) {
 				if !holdsToken(l.Text, cited) {
 					continue
 				}
 				r := rank
+				if declares(l.Text, cited) {
+					r++
+				}
 				if !isComment(l.Text) {
-					r += len(others) + 1
+					r += 2*len(others) + 2
 				}
 				if r > bestRank {
 					best, bestRank = Cite{Text: cited, Found: true, Path: p, Side: l.Side, Line: l.N, Code: l.Text}, r
@@ -198,6 +201,24 @@ func pointedAt(path, hunk string, others []string) int {
 		}
 	}
 	return n
+}
+
+// declares reports a line that introduces name rather than uses it: after a declaring keyword, as a method or a
+// typed field at the start of the line, as a schema field (`name Type`), or as an SQL column or table.
+func declares(line, name string) bool {
+	n := regexp.QuoteMeta(name)
+	for _, pattern := range []string{
+		`\b(?:function|const|let|var|class|interface|type|enum|def|func|struct)\s+\*?` + n + `\b`,
+		`^(?:(?:export|default|public|private|protected|static|async|readonly|override|abstract)\s+)*` + n + `\s*(?:<[^>]*>)?\(.*\)\s*(?::[^=]*)?\{\s*$`,
+		`^(?:(?:public|private|protected|static|readonly)\s+)*` + n + `\??\s*:\s*[A-Za-z_][\w<>\[\]|. ]*;?$`,
+		`^` + n + `\s+[\w.\[\]*]+\??(?:\s+@.*)?$`,
+		`(?i)\b(?:add\s+column|create\s+table|create\s+type)\s+(?:if\s+not\s+exists\s+)?["'\x60]?` + n + `["'\x60]?(?:\s|$|\()`,
+	} {
+		if regexp.MustCompile(pattern).MatchString(line) {
+			return true
+		}
+	}
+	return false
 }
 
 func namesFile(cited, p string) bool {
