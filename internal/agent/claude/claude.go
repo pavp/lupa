@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -28,6 +29,8 @@ type Adapter struct {
 	Bin string
 	// Model is used when a request names none; empty keeps the CLI's default.
 	Model string
+	// Effort is passed as --effort when set; empty keeps Claude Code's default.
+	Effort string
 }
 
 type envelope struct {
@@ -83,7 +86,13 @@ func (a Adapter) Run(ctx context.Context, req agent.Request) (agent.Response, er
 	if req.Schema != "" {
 		args = append(args, "--json-schema", req.Schema)
 	}
+	if a.Effort != "" {
+		args = append(args, "--effort", a.Effort)
+	}
 	cmd := exec.CommandContext(ctx, bin, args...)
+	// claude -p writes its prompt cache with a 1-hour TTL at twice the input price; a review's calls reuse it
+	// within minutes, so the 5-minute TTL at 1.25 times is cheaper (measured: 37% less on a fresh call).
+	cmd.Env = append(os.Environ(), "CLAUDE_CODE_PROMPT_CACHE_TTL=5m")
 	cmd.Dir = req.Dir
 	cmd.Stdin = strings.NewReader(req.Prompt)
 	cmd.WaitDelay = waitDelay

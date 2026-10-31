@@ -46,9 +46,9 @@ const taskSection = `# Task
 
 Review the change in the change block below and report the defects it introduces.
 
-List every candidate defect this change could introduce: wrong logic, a missed case, a broken contract with code that calls or is called by the changed code, state or ordering bugs. Do not filter: Lupa investigates each candidate against the code afterwards, so a defect you leave out is lost while a wrong candidate costs little. When the change has logic, expect about 5 to 10 candidates per group. A defect can need another file to see; read callers and callees with your tools. Severity: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning. Style is not a candidate.
+List every candidate defect this change could introduce: wrong logic, a missed case, a broken contract with code that calls or is called by the changed code, state or ordering bugs. Do not filter: Lupa puts severe candidates in the main list and warnings in a separate list below it, so a defect you leave out is lost while a wrong warning costs little. When the change has logic, expect about 5 to 10 candidates per group. A defect can need another file to see; read callers and callees with your tools. Severity: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning. Style is not a candidate.
 
-Exclusions: do not report pre-existing issues, nitpicks, anything a linter catches, general quality or test coverage remarks, or anything in a file outside this group.
+Exclusions: do not report pre-existing issues, nitpicks, anything a linter catches, general quality or test coverage remarks.
 
 Output: reply with ONE JSON object and nothing else:
 {"files_inspected": [<every path of this group>], "comments": [{"file": "<path>", "severity": "severe"|"warning", "claim": "<what is wrong>", "mechanism": "<how it breaks: input, path, condition>", "fix": "<one concrete change>", "quote": "<the exact code lines the claim is about, copied verbatim from the change including indentation; several consecutive lines allowed>", "quote_settles": true|false}]}

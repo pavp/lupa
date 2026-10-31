@@ -62,6 +62,9 @@ var runPatches = map[string]string{"lib/tax.ts": runTaxPatch, "src/cart.ts": run
 
 // runPlan plans lib/tax.ts and src/cart.ts next to a skipped generated file; with no budget it
 // uses one small enough that each file gets its own group, tax first.
+// twoGroups is a budget each patch fits but the whole change does not, so the plan keeps one group per directory.
+const twoGroups = len(runTaxPatch) + len(runCartPatch) - 1
+
 func runPlan(opts Options) Result {
 	if opts.Budget == 0 {
 		opts.Budget = 400
@@ -146,6 +149,7 @@ func (f *fakeRun) input(plan Result) RunInput {
 		Dir:         "/tmp/worktree",
 		Timeout:     2 * time.Minute,
 		Head:        runHead,
+		Investigate: true,
 	}
 }
 
@@ -186,6 +190,31 @@ func ledgerEntry(t *testing.T, ledger []Entry, path string) Entry {
 		t.Fatalf("no ledger entry for %s in %v", path, ledger)
 	}
 	return ledger[i]
+}
+
+func TestRunWithoutInvestigationReportsEveryAnchoredCandidate(t *testing.T) {
+	plan := runPlan(Options{})
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "severe", "rate may be undefined", taxQuote, false)), nil
+			}
+			return answer([]string{"src/cart.ts"}, comment("src/cart.ts", "severe", "qty may be undefined", cartQuote, false)), nil
+		},
+	}
+	in := f.input(plan)
+	in.Investigate = false
+	out := Run(context.Background(), in)
+
+	if got := paths(out.Findings); !reflect.DeepEqual(got, []string{"lib/tax.ts", "src/cart.ts"}) {
+		t.Fatalf("findings = %v, want both candidates", got)
+	}
+	if n := f.count(investigateSystem); n != 0 || out.Usage.Calls != 2 {
+		t.Errorf("investigator calls = %d, total calls = %d; want none and the 2 reviewers", n, out.Usage.Calls)
+	}
+	if len(out.Refuted) != 0 || len(out.Unconfirmed) != 0 {
+		t.Errorf("refuted %v, unconfirmed %v; want none without investigation", out.Refuted, out.Unconfirmed)
+	}
 }
 
 func TestRunReviewsEveryGroupAndInvestigatesEachFinding(t *testing.T) {
