@@ -169,9 +169,9 @@ const reasonNotValidated = "not validated: the orchestrated review returned no v
 
 // orchestratedFindings anchors each group's comments one by one, so each keeps its validation, and records
 // in out the groups and files left unreviewed and the comments dropped.
-func orchestratedFindings(ctx context.Context, in RunInput, ag agent.Agent, out *RunOutput) []Anchored {
+func orchestratedFindings(ctx context.Context, in RunInput, ag meter, out *RunOutput) []Anchored {
 	var anchored []Anchored
-	for _, o := range orchestrate(ctx, in, ag) {
+	for _, o := range orchestrate(ctx, in, ag.at(UsageOrchestrate)) {
 		if o.reason != "" {
 			out.Ledger = markGroup(out.Ledger, o.paths, o.id, o.reason)
 			continue
@@ -181,7 +181,7 @@ func orchestratedFindings(ctx context.Context, in RunInput, ag agent.Agent, out 
 			out.Dropped = append(out.Dropped, Drop{Stage: StageSchema, Group: o.id, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
 		}
 		for i, c := range o.parsed.Comments {
-			res := Anchor(ctx, AnchorInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Comments: []verify.Comment{c}, Patches: in.Patches, Head: in.Head})
+			res := Anchor(ctx, AnchorInput{Agent: ag.at(UsageAnchor), Dir: in.Dir, Timeout: in.Timeout, Comments: []verify.Comment{c}, Patches: in.Patches, Head: in.Head})
 			for _, d := range res.Dropped {
 				out.Dropped = append(out.Dropped, Drop{Stage: StageAnchor, Group: o.id, Reason: d.Reason, Comment: d.Comment})
 			}

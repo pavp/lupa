@@ -218,7 +218,9 @@ func TestRunReviewsEveryGroupAndInvestigatesEachFinding(t *testing.T) {
 	if first.SystemPrompt != want.System || first.Prompt != want.User || first.Dir != "/tmp/worktree" || first.Timeout != 2*time.Minute || first.Schema != reviewSchema {
 		t.Errorf("first reviewer request = %+v, want the BuildPrompt of group 1 in the worktree with the timeout", first)
 	}
-	if wantUsage := (Usage{Calls: 4, CostUSD: 2, InputTokens: 400, OutputTokens: 40}); out.Usage != wantUsage {
+	half := Tally{Calls: 2, CostUSD: 1, InputTokens: 200, OutputTokens: 20}
+	wantUsage := Usage{Tally: Tally{Calls: 4, CostUSD: 2, InputTokens: 400, OutputTokens: 40}, Stages: map[string]Tally{UsageReview: half, UsageInvestigate: half}}
+	if !reflect.DeepEqual(out.Usage, wantUsage) {
 		t.Errorf("usage = %+v, want %+v", out.Usage, wantUsage)
 	}
 	if !reflect.DeepEqual(out.Ledger, plan.Ledger) {
@@ -464,7 +466,10 @@ func TestRunListsEveryRemovedComment(t *testing.T) {
 	if len(out.Findings) != 0 {
 		t.Errorf("findings = %+v, want none", out.Findings)
 	}
-	if want := (Usage{Calls: 4, CostUSD: 2, InputTokens: 400, OutputTokens: 40}); out.Usage != want {
+	one := Tally{Calls: 1, CostUSD: 0.5, InputTokens: 100, OutputTokens: 10}
+	want := Usage{Tally: Tally{Calls: 4, CostUSD: 2, InputTokens: 400, OutputTokens: 40},
+		Stages: map[string]Tally{UsageReview: {Calls: 2, CostUSD: 1, InputTokens: 200, OutputTokens: 20}, UsageAnchor: one, UsageInvestigate: one}}
+	if !reflect.DeepEqual(out.Usage, want) {
 		t.Errorf("usage = %+v, want %+v over two reviewers, one relocation and one investigator", out.Usage, want)
 	}
 }

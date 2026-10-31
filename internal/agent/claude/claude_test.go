@@ -102,7 +102,7 @@ func TestRunMapsSuccessEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	want := agent.Response{Text: `{"comments":[]}`, CostUSD: 0.0123, Turns: 3, InputTokens: 1507, OutputTokens: 42}
+	want := agent.Response{Text: `{"comments":[]}`, CostUSD: 0.0123, Turns: 3, InputTokens: 1507, OutputTokens: 42, CacheReadTokens: 7}
 	if got != want {
 		t.Errorf("Response = %+v, want %+v", got, want)
 	}
@@ -122,6 +122,9 @@ func TestRunPrefersStructuredOutput(t *testing.T) {
 	}
 	if got.InputTokens != 1182 {
 		t.Errorf("InputTokens = %d, want 1182 (input plus cache creation and reads)", got.InputTokens)
+	}
+	if got.CacheWriteTokens != 1150 || got.CacheReadTokens != 30 {
+		t.Errorf("cache write %d, read %d, want 1150 and 30", got.CacheWriteTokens, got.CacheReadTokens)
 	}
 }
 

@@ -54,12 +54,35 @@ type Drop struct {
 	Comment verify.Comment
 }
 
-// Usage is the sum of every agent call of the run, including failed ones.
+// The stages a run's agent calls are counted under in Usage.Stages.
+const (
+	UsageClaims      = "claims"
+	UsageReview      = "review"
+	UsageAnchor      = "anchor"
+	UsageInvestigate = "investigate"
+	UsageOrchestrate = "orchestrate"
+)
+
+// Tally sums the usage of agent calls, including failed ones.
+type Tally struct {
+	Calls            int
+	CostUSD          float64
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+}
+
+func (t Tally) add(r agent.Response) Tally {
+	return Tally{Calls: t.Calls + 1, CostUSD: t.CostUSD + r.CostUSD, InputTokens: t.InputTokens + r.InputTokens,
+		OutputTokens: t.OutputTokens + r.OutputTokens, CacheReadTokens: t.CacheReadTokens + r.CacheReadTokens,
+		CacheWriteTokens: t.CacheWriteTokens + r.CacheWriteTokens}
+}
+
+// Usage is the run's total and its split by stage.
 type Usage struct {
-	Calls        int
-	CostUSD      float64
-	InputTokens  int
-	OutputTokens int
+	Tally
+	Stages map[string]Tally
 }
 
 // RunOutput is the verified review: the confirmed findings and the pre-existing follow-ups in merge
@@ -97,7 +120,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			defer wg.Done()
 			limit <- struct{}{}
 			defer func() { <-limit }()
-			claims = CheckClaims(ctx, ClaimsInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Sentences: in.Sentences, Patches: in.ClaimPatches})
+			claims = CheckClaims(ctx, ClaimsInput{Agent: ag.at(UsageClaims), Dir: in.Dir, Timeout: in.Timeout, Sentences: in.Sentences, Patches: in.ClaimPatches})
 		}()
 	}
 	var anchored []Anchored
@@ -145,7 +168,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	if in.Orchestrate {
 		inv = validate(candidates, in.Head)
 	} else {
-		inv = Investigate(ctx, InvestigateInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
+		inv = Investigate(ctx, InvestigateInput{Agent: ag.at(UsageInvestigate), Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
 			Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
 	}
 	confirmed := inv.Confirmed
@@ -177,11 +200,11 @@ type groupResult struct {
 	findings    []Anchored
 }
 
-func reviewOne(ctx context.Context, in RunInput, ag agent.Agent, g Group) groupResult {
+func reviewOne(ctx context.Context, in RunInput, ag meter, g Group) groupResult {
 	patch, paths := groupPatch(g)
 	p := BuildPrompt(PromptInput{Patch: patch, Paths: paths, Importers: in.Importers, Symbols: in.Symbols, Conventions: in.Conventions})
 	r := groupResult{paths: paths}
-	parsed, reason := reviewGroup(ctx, ag, agent.Request{Dir: in.Dir, SystemPrompt: p.System, Prompt: p.User, Timeout: in.Timeout, Schema: reviewSchema}, paths)
+	parsed, reason := reviewGroup(ctx, ag.at(UsageReview), agent.Request{Dir: in.Dir, SystemPrompt: p.System, Prompt: p.User, Timeout: in.Timeout, Schema: reviewSchema}, paths)
 	if reason != "" {
 		r.reason = reason
 		return r
@@ -190,7 +213,7 @@ func reviewOne(ctx context.Context, in RunInput, ag agent.Agent, g Group) groupR
 	for _, d := range parsed.Dropped {
 		r.dropped = append(r.dropped, Drop{Stage: StageSchema, Group: g.ID, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
 	}
-	res := Anchor(ctx, AnchorInput{Agent: ag, Dir: in.Dir, Timeout: in.Timeout, Comments: parsed.Comments, Patches: in.Patches, Head: in.Head})
+	res := Anchor(ctx, AnchorInput{Agent: ag.at(UsageAnchor), Dir: in.Dir, Timeout: in.Timeout, Comments: parsed.Comments, Patches: in.Patches, Head: in.Head})
 	for _, d := range res.Dropped {
 		r.dropped = append(r.dropped, Drop{Stage: StageAnchor, Group: g.ID, Reason: d.Reason, Comment: d.Comment})
 	}
@@ -274,20 +297,27 @@ func dedupe(fs []Anchored) []Anchored {
 	return out
 }
 
-// meter sums the usage of every call it forwards, from any number of goroutines.
+// meter sums the usage of every call it forwards, in total and under its stage, from any number of goroutines.
 type meter struct {
 	agent.Agent
 	usage *Usage
 	mu    *sync.Mutex
+	stage string
+}
+
+func (m meter) at(stage string) meter {
+	m.stage = stage
+	return m
 }
 
 func (m meter) Run(ctx context.Context, req agent.Request) (agent.Response, error) {
 	resp, err := m.Agent.Run(ctx, req)
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.usage.Calls++
-	m.usage.CostUSD += resp.CostUSD
-	m.usage.InputTokens += resp.InputTokens
-	m.usage.OutputTokens += resp.OutputTokens
+	m.usage.Tally = m.usage.add(resp)
+	if m.usage.Stages == nil {
+		m.usage.Stages = map[string]Tally{}
+	}
+	m.usage.Stages[m.stage] = m.usage.Stages[m.stage].add(resp)
 	return resp, err
 }

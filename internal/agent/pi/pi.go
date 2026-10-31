@@ -125,6 +125,8 @@ func parse(out []byte) (agent.Response, error) {
 			resp.CostUSD += u.Cost.Total
 			resp.InputTokens += u.Input + u.CacheRead + u.CacheWrite
 			resp.OutputTokens += u.Output
+			resp.CacheReadTokens += u.CacheRead
+			resp.CacheWriteTokens += u.CacheWrite
 			last = &e
 		}
 	}

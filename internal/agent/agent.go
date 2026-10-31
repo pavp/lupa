@@ -30,6 +30,9 @@ type Response struct {
 	Turns        int
 	InputTokens  int
 	OutputTokens int
+	// CacheReadTokens and CacheWriteTokens are the part of InputTokens read from or written to the prompt cache.
+	CacheReadTokens  int
+	CacheWriteTokens int
 }
 
 // Agent runs one request to completion.

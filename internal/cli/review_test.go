@@ -225,7 +225,10 @@ type reviewOut struct {
 	Dropped     []json.RawMessage `json:"dropped"`
 	Ledger      []json.RawMessage `json:"ledger"`
 	Usage       struct {
-		Calls int `json:"calls"`
+		Calls  int `json:"calls"`
+		Stages map[string]struct {
+			Calls int `json:"calls"`
+		} `json:"stages"`
 	} `json:"usage"`
 }
 
@@ -258,6 +261,9 @@ func TestReviewRunJSON(t *testing.T) {
 	if r.Refuted == nil || r.Unconfirmed == nil || r.Dropped == nil || len(r.Ledger) == 0 || r.Usage.Calls != len(reqs) || len(reqs) != 1 || !reqs[0].Subagents {
 		t.Errorf("refuted %v, unconfirmed %v, dropped %v, ledger %d, usage %d, requests %d; want one orchestrated session",
 			r.Refuted, r.Unconfirmed, r.Dropped, len(r.Ledger), r.Usage.Calls, len(reqs))
+	}
+	if got := r.Usage.Stages["orchestrate"].Calls; got != 1 {
+		t.Errorf("usage stages = %+v, want the session under orchestrate", r.Usage.Stages)
 	}
 
 	saved, err := os.ReadFile(filepath.Join(dir, ".git", "lupa", "feature", head[:7], "review.json"))
