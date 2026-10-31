@@ -86,17 +86,20 @@ func (r *Resolver) loadConfigs(files []string, name string, readFile func(string
 // Resolve returns the repo file that spec, imported from the file from, names.
 func (r *Resolver) Resolve(from, spec string) (string, Status) {
 	if spec == "." || spec == ".." || strings.HasPrefix(spec, "./") || strings.HasPrefix(spec, "../") {
-		return r.found(r.file(path.Join(path.Dir(from), spec)))
+		return r.target(path.Join(path.Dir(from), spec))
 	}
 	if c := r.configFor(from); c != nil {
 		if a, ok := match(c.aliases, spec); ok {
 			star := strings.TrimSuffix(strings.TrimPrefix(spec, a.prefix), a.suffix)
+			status := Unresolved
 			for _, t := range a.targets {
-				if f := r.file(strings.Replace(t, "*", star, 1)); f != "" {
+				f, st := r.target(strings.Replace(t, "*", star, 1))
+				if st == Resolved {
 					return f, Resolved
 				}
+				status = min(status, st)
 			}
-			return "", Unresolved
+			return "", status
 		}
 	}
 	if f, status, ok := r.resolveWorkspace(spec); ok {
@@ -115,11 +118,19 @@ func (r *Resolver) Resolve(from, spec string) (string, Status) {
 	return "", External
 }
 
-func (r *Resolver) found(f string) (string, Status) {
-	if f == "" {
-		return "", Unresolved
+// target resolves the path p to a source file, or reports it External when only a declaration file exists
+// there, so a types-only import is never reported as a missing file.
+func (r *Resolver) target(p string) (string, Status) {
+	if f := r.file(p); f != "" {
+		return f, Resolved
 	}
-	return f, Resolved
+	p = path.Clean(p)
+	for _, f := range []string{p, p + ".d.ts", strings.TrimSuffix(p, path.Ext(p)) + ".d.ts", path.Join(p, "index.d.ts")} {
+		if strings.HasSuffix(f, ".d.ts") && r.files[f] {
+			return "", External
+		}
+	}
+	return "", Unresolved
 }
 
 // file returns the source file p names, trying the compiler's extension mapping, then added

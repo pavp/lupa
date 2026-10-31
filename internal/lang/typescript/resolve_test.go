@@ -59,7 +59,8 @@ func TestResolve(t *testing.T) {
 		{"alias from an extended config", "apps/web/src/pages/Home.tsx", "@/lib/date", "apps/web/src/lib/date.ts", Resolved},
 		{"exact alias", "apps/web/src/pages/Home.tsx", "@config", "config/index.ts", Resolved},
 		{"nearest tsconfig wins", "packages/kit/src/index.ts", "~/button", "packages/kit/src/button.ts", Resolved},
-		{"declaration files are not code", "apps/web/src/pages/Home.tsx", "../types", "", Unresolved},
+		// A declaration file is types, not code: no graph edge, but the import is not missing either.
+		{"declaration files are not code", "apps/web/src/pages/Home.tsx", "../types", "", External},
 		{"missing relative file", "apps/web/src/pages/Home.tsx", "./missing", "", Unresolved},
 		{"missing alias target", "apps/web/src/pages/Home.tsx", "@/nope", "", Unresolved},
 		{"package outside the repo", "apps/web/src/pages/Home.tsx", "react", "", External},
