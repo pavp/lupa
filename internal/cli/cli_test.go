@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/pavp/lupa/internal/agent"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -757,5 +759,36 @@ func TestSkillInstallNeverReplacesASkillItDidNotWrite(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(filepath.Join(mine, "SKILL.md")); string(got) != "---\nname: lupa\n---\nmy own\n" {
 		t.Errorf("the user's own skill changed: %q", got)
+	}
+}
+
+func TestHelpAndVersion(t *testing.T) {
+	for _, args := range [][]string{{"--help"}, {"-h"}, {"help"}} {
+		var out, errOut bytes.Buffer
+		if code := Run(args, Env{Stdout: &out, Stderr: &errOut}); code != 0 || !strings.Contains(out.String(), "lupa skill install") || errOut.Len() != 0 {
+			t.Errorf("%v: exit %d, stdout %q, stderr %q; want 0 and the usage on stdout", args, code, out.String(), errOut.String())
+		}
+	}
+	for _, args := range [][]string{{"--version"}, {"version"}} {
+		var out bytes.Buffer
+		if code := Run(args, Env{Stdout: &out, Stderr: &out}); code != 0 || !strings.HasPrefix(out.String(), "lupa ") {
+			t.Errorf("%v: exit %d, output %q; want 0 and `lupa <version>`", args, code, out.String())
+		}
+	}
+}
+
+func TestDoctorChecksTheToolsAndTheAgentLogin(t *testing.T) {
+	dir, _, _ := newRepo(t)
+	ok := &agent.Fake{Reply: func(agent.Request) (string, error) { return "ok", nil }}
+	var out bytes.Buffer
+	code := Run([]string{"doctor"}, Env{Dir: dir, Stdout: &out, Stderr: &out, Agent: ok})
+	if code != 0 || !strings.Contains(out.String(), "git") || !strings.Contains(out.String(), "claude   ok") {
+		t.Errorf("doctor with a working agent: exit %d, output:\n%s", code, out.String())
+	}
+	broken := &agent.Fake{Reply: func(agent.Request) (string, error) { return "", errors.New("not logged in") }}
+	out.Reset()
+	code = Run([]string{"doctor"}, Env{Dir: dir, Stdout: &out, Stderr: &out, Agent: broken})
+	if code != 1 || !strings.Contains(out.String(), "claude   FAIL") || !strings.Contains(out.String(), "not logged in") {
+		t.Errorf("doctor with a failing agent: exit %d, output:\n%s; want 1 and the claude failure", code, out.String())
 	}
 }

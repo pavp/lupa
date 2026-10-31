@@ -16,8 +16,11 @@ Lupa runs your agent's CLI (Claude Code, Pi) as its review engine and checks eve
 
 `lupa map` and `lupa review` work on local branch ranges and on GitHub PRs, with Claude Code; Pi is next. See [`docs/design.md`](docs/design.md).
 
+Needs `git`; Claude Code installed and logged in (reviews run on your subscription); `gh` logged in for PR targets; Pi only for `--agent pi`. `lupa doctor` checks them, with one minimal Claude Code call.
+
 ```sh
 go install github.com/pavp/lupa/cmd/lupa@latest
+lupa doctor                 # git, gh, Claude Code login, Pi
 
 lupa map feature            # the branch against the default branch, as a PR would show it
 lupa map main..feature      # an explicit range
