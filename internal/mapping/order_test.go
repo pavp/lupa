@@ -102,3 +102,28 @@ func TestAnEndToEndTestIsPairedWithoutImportingItsSubject(t *testing.T) {
 		t.Errorf("reading order = %+v, want the e2e test paired before src/api/webhook.ts", s.ReadingOrder)
 	}
 }
+
+func TestReadingOrderPairsTestsOfNamesWithSeveralDots(t *testing.T) {
+	s := Build(Input{Files: []File{
+		{Path: "src/v/hooks/use-a.hook.ts"},
+		{Path: "src/v/hooks/use-a.hook.test.ts"},
+		{Path: "src/v/invite.view.tsx"},
+		{Path: "src/v/invite.view.test.tsx"},
+		{Path: "src/service/insightsBooking.ts"},
+		{Path: "src/service/__tests__/insightsBooking.integration-test.ts"},
+	}, Reach: Reach{Imports: map[string][]string{
+		"src/service/__tests__/insightsBooking.integration-test.ts": {"src/service/insightsBooking.ts"},
+		"src/v/hooks/use-a.hook.test.ts":                            {"src/v/hooks/use-a.hook.ts"},
+		"src/v/invite.view.test.tsx":                                {"src/v/invite.view.tsx"},
+	}}})
+	whys := map[string]string{}
+	for _, e := range s.ReadingOrder {
+		whys[e.Path] = e.Why
+	}
+	for test, subject := range map[string]string{"src/v/hooks/use-a.hook.test.ts": "src/v/hooks/use-a.hook.ts", "src/v/invite.view.test.tsx": "src/v/invite.view.tsx",
+		"src/service/__tests__/insightsBooking.integration-test.ts": "src/service/insightsBooking.ts"} {
+		if !strings.Contains(whys[test], "test of "+subject) {
+			t.Errorf("%s: why = %q, want it paired with %s", test, whys[test], subject)
+		}
+	}
+}

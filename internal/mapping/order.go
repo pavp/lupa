@@ -128,7 +128,7 @@ func subjectOf(test string, code []File) (string, bool) {
 
 func testStem(base string) string {
 	base = strings.TrimPrefix(base, "test_")
-	for _, marker := range []string{".test.", ".spec.", ".e2e.", "_test."} {
+	for _, marker := range []string{".integration-test.", ".test.", ".spec.", ".e2e.", "_test."} {
 		if i := strings.Index(base, marker); i >= 0 {
 			return base[:i]
 		}
@@ -136,8 +136,9 @@ func testStem(base string) string {
 	return codeStem(base)
 }
 
+// codeStem drops only the last extension, so `invite.view.tsx` pairs with `invite.view.test.tsx`.
 func codeStem(base string) string {
-	if i := strings.Index(base, "."); i > 0 {
+	if i := strings.LastIndex(base, "."); i > 0 {
 		return base[:i]
 	}
 	return base
