@@ -253,8 +253,9 @@ func TestDiffsFollowRenames(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []FileChange{{Path: "moved.txt", OldPath: "b.txt"}, {Path: "new dir/a.go", OldPath: "old dir/a.go", Additions: 1, Deletions: 1},
-		{Path: "ñandú.go", Additions: 1, Deletions: 1}}
+	want := []FileChange{{Path: "moved.txt", OldPath: "b.txt"},
+		{Path: "new dir/a.go", OldPath: "old dir/a.go", Additions: 1, Deletions: 1, Authored: 2},
+		{Path: "ñandú.go", Additions: 1, Deletions: 1, Authored: 2}}
 	if !reflect.DeepEqual(changes, want) {
 		t.Errorf("numstat = %+v, want %+v", changes, want)
 	}
@@ -293,5 +294,26 @@ func TestBlobReaderRejectsAPathThatWouldSplitTheRequest(t *testing.T) {
 	}
 	if got, err := r.Read("a.txt"); err != nil || string(got) != "v2\n" {
 		t.Errorf("Read(a.txt) after bad paths = %q, %v; want the head content", got, err)
+	}
+}
+
+func TestNumStatAuthoredIgnoresWhitespaceOnlyChanges(t *testing.T) {
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("a\nb\nc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	base := gitCmd(t, dir, "rev-parse", "HEAD")
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("\ta\n\tb\nC\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCmd(t, dir, "commit", "-q", "-am", "reindent")
+	head := gitCmd(t, dir, "rev-parse", "HEAD")
+
+	changes, err := Repo{Dir: dir}.NumStat(base, head)
+	if want := []FileChange{{Path: "a.go", Additions: 3, Deletions: 3, Authored: 2}}; err != nil || !reflect.DeepEqual(changes, want) {
+		t.Errorf("numstat = %+v, %v; want %+v: the reindent is not authored", changes, err, want)
 	}
 }

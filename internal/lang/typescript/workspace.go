@@ -129,12 +129,15 @@ func (r *Resolver) resolveWorkspace(spec string) (file string, status Status, ok
 	default:
 		candidates = []string{sub}
 	}
+	best := Unresolved
 	for _, c := range candidates {
-		if f := r.file(path.Join(pkg.dir, c)); f != "" {
+		f, st := r.target(path.Join(pkg.dir, c))
+		if st == Resolved {
 			return f, Resolved, true
 		}
+		best = min(best, st)
 	}
-	return "", Unresolved, true
+	return "", best, true
 }
 
 // exportTargets returns the files an `exports` field maps sub to, in condition order.
