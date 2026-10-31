@@ -3,6 +3,7 @@ package mapping
 
 import (
 	"fmt"
+	"path"
 	"regexp"
 	"slices"
 	"strings"
@@ -27,6 +28,8 @@ type File struct {
 	Reason    string `json:"reason"`
 	// Importers are the files outside this change that reach this one through imports, directly or not.
 	Importers []string `json:"importers,omitempty"`
+	// CallSites are the file:line call sites outside the change of the declarations the change touches here.
+	CallSites []string `json:"call_sites,omitempty"`
 	// DirectImporters are the Importers that import this file themselves.
 	DirectImporters []string `json:"direct_importers,omitempty"`
 	// Owners come from the base branch's CODEOWNERS, so a change cannot pick its own reviewers.
@@ -48,6 +51,11 @@ type Reach struct {
 	Unresolved []Unresolved
 	// Imports are the resolved direct imports of changed files; nil when the language is not analyzed.
 	Imports map[string][]string
+	// Calls are, per changed file whose declarations were analyzed, the call sites (file:line) outside the
+	// change of the declarations the change touches; a file absent from it was not analyzed.
+	Calls map[string][]string
+	// ChangedCallers are, per changed file, the other changed files that call the declarations it changes.
+	ChangedCallers map[string][]string
 }
 
 // TestMismatch is a test named after a changed file that does not import it, so it may not exercise it.
@@ -166,7 +174,20 @@ func Build(in Input) Signals {
 		f.Importers = reach.Importers[f.Path]
 		f.DirectImporters = reach.Direct[f.Path]
 		f.Owners = in.Owners[f.Path]
-		if len(f.Importers) > 0 && f.Class == Skim {
+		sites, analyzed := reach.Calls[f.Path]
+		f.CallSites = sites
+		// A file's importers say little when its changed declarations have callers known by name: those are the impact.
+		switch {
+		case f.Class != Skim:
+		case analyzed && len(sites) > 0:
+			f.Class, f.Risk = ReadFirst, Impact
+			f.Reason = fmt.Sprintf("%d call %s of its changed declarations outside this change", len(sites), plural(len(sites), "site", "sites"))
+		case analyzed && len(reach.ChangedCallers[f.Path]) > 0:
+			// The rest of the change is built on this file, so reading it first explains the others.
+			n := len(reach.ChangedCallers[f.Path])
+			f.Class = ReadFirst
+			f.Reason = fmt.Sprintf("its changed declarations are called from %d other changed %s", n, plural(n, "file", "files"))
+		case !analyzed && len(f.Importers) > 0:
 			f.Class, f.Risk = ReadFirst, Impact
 			f.Reason = fmt.Sprintf("imported by %d %s outside this change", len(f.Importers), plural(len(f.Importers), "file", "files"))
 		}
@@ -178,7 +199,10 @@ func Build(in Input) Signals {
 		s.Size.Files++
 		s.Size.Additions += f.Additions
 		s.Size.Deletions += f.Deletions
-		s.Size.Changed += f.Additions + f.Deletions - f.WhitespaceOnly
+		s.Size.Changed += f.Additions + f.Deletions
+		if !indentationMatters(f.Path) {
+			s.Size.Changed -= f.WhitespaceOnly
+		}
 	}
 	if in.PR != nil {
 		s.PR = &PRInfo{Number: in.PR.Number, URL: in.PR.URL, Title: in.PR.Title}
@@ -234,7 +258,8 @@ func duplicate(files []File, pr *PR) (Gate, bool) {
 				shared++
 			}
 		}
-		if shared > 0 && 2*shared >= len(own) {
+		// One shared file says little: in a busy repo a small PR shares it with many unrelated ones.
+		if shared >= 2 && 2*shared >= len(own) {
 			name := fmt.Sprintf("PR #%d", o.Number)
 			if o.Title != "" {
 				name += " (" + o.Title + ")"
@@ -268,4 +293,13 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// indentationMatters reports a file whose whitespace changes what runs, so whitespace-only lines are real changes.
+func indentationMatters(p string) bool {
+	switch ext := strings.ToLower(path.Ext(p)); {
+	case ext == ".py" || ext == ".yml" || ext == ".yaml":
+		return true
+	}
+	return strings.EqualFold(path.Base(p), "makefile")
 }

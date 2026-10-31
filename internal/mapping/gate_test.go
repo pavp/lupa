@@ -77,3 +77,12 @@ func TestReviewNowGateForAPR(t *testing.T) {
 		})
 	}
 }
+
+func TestOneSharedFileIsNotADuplicate(t *testing.T) {
+	files := []File{{Path: "src/a.ts", Additions: 5}}
+	pr := &PR{Number: 7, Body: "Totals now include the quantity of each item, so carts with several units charge correctly.", Open: []OpenPR{{Number: 9, Files: []string{"src/a.ts", "src/z.ts"}}}}
+	// A one-file PR shares its file with many unrelated open PRs in a busy repo.
+	if g := Build(Input{Files: files, PR: pr}).ReviewNow; g.Decision != Review {
+		t.Errorf("gate = %+v, want review: one shared file is not a duplicate", g)
+	}
+}

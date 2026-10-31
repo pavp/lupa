@@ -30,3 +30,44 @@ func TestBuild(t *testing.T) {
 		})
 	}
 }
+
+func TestImpactByCallSites(t *testing.T) {
+	files := []File{{Path: "src/a.ts", Additions: 1}, {Path: "src/b.ts", Additions: 1}, {Path: "src/c.go", Additions: 1}}
+	reach := Reach{
+		Importers: map[string][]string{"src/a.ts": {"x.ts", "y.ts"}, "src/b.ts": {"z.ts"}, "src/c.go": {"d.go"}},
+		// a.ts's changed declarations have no caller outside the change; b.ts's have one; c.go is not analyzed.
+		Calls: map[string][]string{"src/a.ts": nil, "src/b.ts": {"z.ts:3"}},
+	}
+	got := map[string]File{}
+	for _, f := range Build(Input{Files: files, Reach: reach}).Files {
+		got[f.Path] = f
+	}
+	if a := got["src/a.ts"]; a.Risk == Impact {
+		t.Errorf("a.ts = %+v, want no impact: importers reach the file but no caller of what changed", a)
+	}
+	if b := got["src/b.ts"]; b.Risk != Impact || b.Class != ReadFirst || b.Reason != "1 call site of its changed declarations outside this change" || !reflect.DeepEqual(b.CallSites, []string{"z.ts:3"}) {
+		t.Errorf("b.ts = %+v, want read first by its call site", b)
+	}
+	if c := got["src/c.go"]; c.Risk != Impact || c.Reason != "imported by 1 file outside this change" {
+		t.Errorf("c.go = %+v, want impact by importers where calls are not analyzed", c)
+	}
+}
+
+func TestReadFirstWhenOtherChangedFilesCallIt(t *testing.T) {
+	files := []File{{Path: "src/lib.ts", Additions: 1}, {Path: "src/a.ts", Additions: 1}, {Path: "src/b.ts", Additions: 1}}
+	reach := Reach{Calls: map[string][]string{"src/lib.ts": nil}, ChangedCallers: map[string][]string{"src/lib.ts": {"src/a.ts", "src/b.ts"}}}
+	for _, f := range Build(Input{Files: files, Reach: reach}).Files {
+		if f.Path == "src/lib.ts" && (f.Class != ReadFirst || f.Reason != "its changed declarations are called from 2 other changed files") {
+			t.Errorf("lib.ts = %+v, want read first: the rest of the change depends on it", f)
+		}
+	}
+}
+
+func TestIndentationIsBehaviorInSomeFiles(t *testing.T) {
+	// Moving a Python call into an `if` only changes indentation, and changes what runs.
+	files := []File{{Path: "app/jobs.py", Additions: 1, Deletions: 1, WhitespaceOnly: 2}, {Path: "ci.yml", Additions: 2, WhitespaceOnly: 2},
+		{Path: "Makefile", Additions: 1, WhitespaceOnly: 1}, {Path: "src/a.ts", Additions: 3, WhitespaceOnly: 3}}
+	if got := Build(Input{Files: files}).Size.Changed; got != 5 {
+		t.Errorf("changed = %d, want 5: whitespace counts in .py, .yml and Makefile, not in .ts", got)
+	}
+}
