@@ -489,7 +489,7 @@ func runReview(args []string, env Env) error {
 	if asJSON {
 		_, err = env.Stdout.Write(saved)
 	} else {
-		md := report.Review(report.ReviewInput{Base: signals.Base, Head: signals.Head, Out: out})
+		md := report.Review(report.ReviewInput{Base: signals.Base, Head: signals.Head, Out: out, Map: &signals})
 		if _, err := st.Put(key, signals.Head, "review.md", md); err != nil {
 			return fmt.Errorf("saving the review: %w", err)
 		}

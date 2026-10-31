@@ -4,23 +4,29 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/pavp/lupa/internal/mapping"
 	"github.com/pavp/lupa/internal/review"
 	"github.com/pavp/lupa/internal/verify"
 )
 
-// ReviewInput is a verified review of the change from Base to Head.
+// ReviewInput is a verified review of the change from Base to Head, with the change's map when there is one.
 type ReviewInput struct {
 	Base, Head string
 	Out        review.RunOutput
+	Map        *mapping.Signals
 }
 
-// Review renders a verified review: every finding by level, worst first, then the pre-existing
-// follow-ups, the coverage, every unconfirmed, refuted or dropped comment and the run's notes. No finding is
-// capped; every model-written text and every error reason is redacted.
+// Review renders a verified review in the order a reviewer needs it: whether to review now, the description
+// against the diff, the findings to check (blocking and important) in full, a reading order that starts with the
+// files those findings are in, the minor findings one line each, the coverage, and every unconfirmed, refuted or
+// dropped comment with its reason. No finding is capped; every model-written text and every error reason is redacted.
 func Review(in ReviewInput) []byte {
 	var b strings.Builder
 	out := in.Out
 	fmt.Fprintf(&b, "## Lupa review — `%s..%s`\n\n", short(in.Base), short(in.Head))
+	if in.Map != nil {
+		writeReviewNow(&b, in.Map.ReviewNow)
+	}
 	levels := map[string]int{}
 	for _, f := range out.Findings {
 		levels[f.Finding.Level]++
@@ -30,30 +36,46 @@ func Review(in ReviewInput) []byte {
 		count(levels[verify.LevelNote], "note", "notes"), count(levels[verify.LevelFollowUp], "follow-up", "follow-ups"),
 		len(out.Dropped), len(out.Refuted), len(out.Unconfirmed), count(out.Usage.Calls, "agent run", "agent runs"), out.Usage.CostUSD)
 
-	if len(out.Findings) == 0 {
-		b.WriteString("No findings.\n\n")
-	}
-	n := 0
-	for _, sec := range []struct{ level, title string }{
-		{verify.LevelBlocking, "Blocking"}, {verify.LevelImportant, "Important"}, {verify.LevelNote, "Notes"},
-		{verify.LevelFollowUp, "Follow-up (pre-existing)"},
-	} {
-		if levels[sec.level] == 0 {
-			continue
-		}
-		fmt.Fprintf(&b, "### %s\n\n", sec.title)
-		for _, a := range out.Findings {
-			if a.Finding.Level == sec.level {
-				n++
-				writeFinding(&b, n, a)
-			}
-		}
-	}
-
 	if len(out.Claims) > 0 {
 		b.WriteString("### Description vs diff (prose claims)\n\n")
 		for _, c := range out.Claims {
 			fmt.Fprintf(&b, "- \"%s\": %s\n", Redact(c.Sentence), claimOutcome(c))
+		}
+		b.WriteString("\n")
+	}
+
+	if len(out.Findings) == 0 {
+		b.WriteString("No findings.\n\n")
+	}
+	main := map[string]int{}
+	if levels[verify.LevelBlocking]+levels[verify.LevelImportant] > 0 {
+		fmt.Fprintf(&b, "### Check these (%d blocking, %d important)\n\n", levels[verify.LevelBlocking], levels[verify.LevelImportant])
+		n := 0
+		for _, level := range []string{verify.LevelBlocking, verify.LevelImportant} {
+			for _, a := range out.Findings {
+				if a.Finding.Level == level {
+					n++
+					writeFinding(&b, n, a)
+					main[a.Finding.Location.File]++
+				}
+			}
+		}
+	}
+	if in.Map != nil {
+		writeReadingOrder(&b, in.Map.ReadingOrder, main, out.Findings)
+	}
+	if levels[verify.LevelNote]+levels[verify.LevelFollowUp] > 0 {
+		b.WriteString("### Minor (one line each; the JSON has the details)\n\n")
+		for _, level := range []string{verify.LevelNote, verify.LevelFollowUp} {
+			for _, a := range out.Findings {
+				if f := a.Finding; f.Level == level {
+					fmt.Fprintf(&b, "- %s · `%s` · %s: %s", f.Level, span(f.Location), f.Causality, Redact(f.Comment.Claim))
+					if a.Held != "" {
+						fmt.Fprintf(&b, " — not promoted: %s", Redact(a.Held))
+					}
+					b.WriteString("\n")
+				}
+			}
 		}
 		b.WriteString("\n")
 	}
@@ -81,15 +103,18 @@ func Review(in ReviewInput) []byte {
 		}
 	}
 
+	if len(out.Unconfirmed)+len(out.Refuted)+len(out.Dropped) > 0 {
+		b.WriteString("\n### Discarded or not confirmed\n")
+	}
 	if len(out.Unconfirmed) > 0 {
-		b.WriteString("\n### Unconfirmed\n\n")
+		b.WriteString("\nUnconfirmed:\n\n")
 	}
 	for _, u := range out.Unconfirmed {
 		f := u.Finding.Finding
 		fmt.Fprintf(&b, "- %s · `%s`: %s — %s\n", f.Level, span(f.Location), Redact(f.Comment.Claim), Redact(u.Reason))
 	}
 	if len(out.Refuted) > 0 {
-		b.WriteString("\n### Refuted\n\n")
+		b.WriteString("\nRefuted:\n\n")
 	}
 	for _, r := range out.Refuted {
 		f := r.Finding.Finding
@@ -100,7 +125,7 @@ func Review(in ReviewInput) []byte {
 		b.WriteString("\n")
 	}
 	if len(out.Dropped) > 0 {
-		b.WriteString("\n### Dropped\n\n")
+		b.WriteString("\nDropped:\n\n")
 	}
 	for _, d := range out.Dropped {
 		fmt.Fprintf(&b, "- %s (group %d) · `%s`: %s", d.Stage, d.Group, d.Comment.File, Redact(d.Reason))
@@ -116,6 +141,53 @@ func Review(in ReviewInput) []byte {
 		fmt.Fprintf(&b, "- %s\n", Redact(n))
 	}
 	return []byte(b.String())
+}
+
+func writeReviewNow(b *strings.Builder, g mapping.Gate) {
+	if g.Decision == mapping.HandBack {
+		fmt.Fprintf(b, "**Review now? Hand back** — %s\nSuggested reply: \"%s\"\n\n", g.Reason, g.Reply)
+		return
+	}
+	fmt.Fprintf(b, "**Review now? Yes** — %s\n\n", g.Reason)
+}
+
+// writeReadingOrder lists the files to read: first those with findings to check, in the order of their first
+// finding, then the map's read-first and skim files; skipped files are in the coverage.
+func writeReadingOrder(b *strings.Builder, order []mapping.ReadingEntry, main map[string]int, findings []review.Anchored) {
+	why := map[string]string{}
+	for _, e := range order {
+		why[e.Path] = e.Why
+	}
+	var lines []string
+	seen := map[string]bool{}
+	for _, level := range []string{verify.LevelBlocking, verify.LevelImportant} {
+		for _, a := range findings {
+			if p := a.Finding.Location.File; a.Finding.Level == level && !seen[p] {
+				seen[p] = true
+				line := fmt.Sprintf("`%s`: %d to check", p, main[p])
+				if w := why[p]; w != "" {
+					line += " · " + w
+				}
+				lines = append(lines, line)
+			}
+		}
+	}
+	for _, section := range []mapping.Class{mapping.ReadFirst, mapping.Skim} {
+		for _, e := range order {
+			if e.Section == section && !seen[e.Path] {
+				seen[e.Path] = true
+				lines = append(lines, fmt.Sprintf("`%s`: %s", e.Path, e.Why))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	b.WriteString("### Reading order\n\n")
+	for i, l := range lines {
+		fmt.Fprintf(b, "%d. %s\n", i+1, l)
+	}
+	b.WriteString("\n")
 }
 
 // citedLineLimit is the most characters of a cited line the text report shows; the JSON keeps it whole.
