@@ -30,6 +30,8 @@ type Anchored struct {
 	Finding   verify.Finding
 	Relocated bool
 	Evidence  []Evidence
+	// Held is why an investigator did not promote a warning it checked, which stays a note.
+	Held string
 	// validation is the orchestrated session's verdict on the comment, nil when it gave none.
 	validation *verdictReply
 }

@@ -221,6 +221,26 @@ func TestRunPromotesWarningsWithAnObservableHarmThatAnInvestigatorConfirms(t *te
 	}
 }
 
+func TestRunKeepsTheInvestigatorsReasonOnAWarningItDidNotConfirm(t *testing.T) {
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			c := comment("lib/tax.ts", "warning", "rate may be undefined", taxQuote, false)
+			c["harm"] = "wrong_data"
+			return answer([]string{"lib/tax.ts", "src/cart.ts"}, c), nil
+		},
+		investigate: func(string) string {
+			return `{"verdict": "unproven", "reasoning": "no caller passes an undefined rate", "blocks": "", "evidence": []}`
+		},
+	}
+	in := f.input(runPlan(Options{}))
+	in.Investigate = false
+	out := Run(context.Background(), in)
+
+	if len(out.Findings) != 1 || out.Findings[0].Finding.Level != verify.LevelNote || !strings.Contains(out.Findings[0].Held, "no caller passes an undefined rate") {
+		t.Errorf("findings = %+v, want the warning kept as a note with the investigator's reason", out.Findings)
+	}
+}
+
 func TestRunWithoutInvestigationReportsEveryAnchoredCandidate(t *testing.T) {
 	plan := runPlan(Options{})
 	f := &fakeRun{

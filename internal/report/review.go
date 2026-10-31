@@ -167,6 +167,9 @@ func writeFinding(b *strings.Builder, n int, a review.Anchored) {
 		}
 		fmt.Fprintf(b, "Evidence: %s\n\n", strings.Join(locs, ", "))
 	}
+	if a.Held != "" {
+		fmt.Fprintf(b, "Not promoted: %s\n\n", Redact(a.Held))
+	}
 }
 
 // span formats a location as file:start, or file:start-end when it covers several lines.

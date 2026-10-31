@@ -168,7 +168,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	}
 	candidates := slices.DeleteFunc(slices.Clone(merged), followUp)
 	var inv InvestigateResult
-	promoted := map[verify.Finding][]Evidence{}
+	promoted, held := map[verify.Finding][]Evidence{}, map[verify.Finding]string{}
 	switch {
 	case in.Orchestrate:
 		inv = validate(candidates, in.Head)
@@ -187,6 +187,9 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 				Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
 			for _, c := range checked.Confirmed {
 				promoted[c.Finding.Finding] = c.Evidence
+			}
+			for _, c := range slices.Concat(checked.Refuted, checked.Unconfirmed) {
+				held[c.Finding.Finding] = c.Reason
 			}
 		}
 	default:
@@ -208,6 +211,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			if ev, ok := promoted[f.Finding]; ok {
 				f.Finding.Level, f.Evidence = verify.LevelImportant, ev
 			}
+			f.Held = held[f.Finding]
 			out.Findings = append(out.Findings, f)
 			confirmed = confirmed[1:]
 		}

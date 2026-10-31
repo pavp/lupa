@@ -231,6 +231,7 @@ type findingJSON struct {
 	End       int               `json:"end"`
 	Severity  string            `json:"severity"`
 	Harm      string            `json:"harm,omitempty"`
+	Held      string            `json:"not_promoted,omitempty"`
 	Level     string            `json:"level"`
 	Causality string            `json:"causality"`
 	Claim     string            `json:"claim"`
@@ -318,7 +319,7 @@ func findingJSONOf(a review.Anchored) findingJSON {
 	f, c := a.Finding, a.Finding.Comment
 	return findingJSON{File: f.Location.File, Side: f.Location.Side, Start: f.Location.Start, End: f.Location.End, Severity: c.Severity, Harm: c.Harm,
 		Level: f.Level, Causality: f.Causality, Claim: report.Redact(c.Claim), Mechanism: report.Redact(c.Mechanism), Fix: report.Redact(c.Fix),
-		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged, Evidence: evidenceJSON(a.Evidence)}
+		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged, Evidence: evidenceJSON(a.Evidence), Held: report.Redact(a.Held)}
 }
 
 func evidenceJSON(es []review.Evidence) []review.Evidence {
