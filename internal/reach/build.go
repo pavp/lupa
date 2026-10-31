@@ -33,6 +33,8 @@ func Build(files []string, readFile func(string) ([]byte, error), p lang.Provide
 				}
 			case lang.Unresolved:
 				g.Unresolved = append(g.Unresolved, Unresolved{From: f, Specifier: spec, Line: lineOf(src, spec)})
+			case lang.Ignored:
+				g.Ignored = append(g.Ignored, Unresolved{From: f, Specifier: spec, Line: lineOf(src, spec)})
 			}
 		}
 		imports := make([]string, 0, len(targets))
@@ -42,10 +44,12 @@ func Build(files []string, readFile func(string) ([]byte, error), p lang.Provide
 		sort.Strings(imports)
 		g.Imports[f] = imports
 	}
-	sort.Slice(g.Unresolved, func(i, j int) bool {
-		a, b := g.Unresolved[i], g.Unresolved[j]
-		return a.From < b.From || a.From == b.From && a.Specifier < b.Specifier
-	})
+	for _, list := range [][]Unresolved{g.Unresolved, g.Ignored} {
+		sort.Slice(list, func(i, j int) bool {
+			a, b := list[i], list[j]
+			return a.From < b.From || a.From == b.From && a.Specifier < b.Specifier
+		})
+	}
 	return g, nil
 }
 

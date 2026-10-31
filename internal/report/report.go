@@ -3,6 +3,7 @@ package report
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/pavp/lupa/internal/mapping"
@@ -61,6 +62,14 @@ func Markdown(s mapping.Signals) []byte {
 	}
 	for _, u := range s.Unresolved {
 		fmt.Fprintf(&b, "- Unresolved imports: `%s` imports `%s`\n", u.From, u.Specifier)
+	}
+	for _, spec := range ignoredSpecifiers(s.IgnoredImports) {
+		froms := ignoredFrom(s.IgnoredImports, spec)
+		from := fmt.Sprintf("`%s`", froms[0])
+		if len(froms) > 1 {
+			from = fmt.Sprintf("%d files", len(froms))
+		}
+		fmt.Fprintf(&b, "- Imports of paths git ignores (likely generated): `%s` from %s\n", spec, from)
 	}
 	switch {
 	case len(tests) > 0:
@@ -205,4 +214,24 @@ func at(path string, line int) string {
 		return fmt.Sprintf("%s:%d", path, line)
 	}
 	return path
+}
+
+func ignoredSpecifiers(list []mapping.Unresolved) []string {
+	var out []string
+	for _, u := range list {
+		if !slices.Contains(out, u.Specifier) {
+			out = append(out, u.Specifier)
+		}
+	}
+	return out
+}
+
+func ignoredFrom(list []mapping.Unresolved, spec string) []string {
+	var out []string
+	for _, u := range list {
+		if u.Specifier == spec && !slices.Contains(out, u.From) {
+			out = append(out, u.From)
+		}
+	}
+	return out
 }

@@ -664,6 +664,11 @@ func reachOf(repo git.Repo, head string, changed []mapping.File) (mapping.Reach,
 			out.Unresolved = append(out.Unresolved, mapping.Unresolved{From: u.From, Specifier: u.Specifier, Line: u.Line})
 		}
 	}
+	for _, u := range g.Ignored {
+		if inChange[u.From] {
+			out.Ignored = append(out.Ignored, mapping.Unresolved{From: u.From, Specifier: u.Specifier, Line: u.Line})
+		}
+	}
 	return out, nil
 }
 
