@@ -87,7 +87,7 @@ func isGenerated(base string) bool {
 }
 
 func isTest(base string, dirs map[string]bool) bool {
-	return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") ||
+	return strings.Contains(base, ".test.") || strings.Contains(base, ".spec.") || strings.Contains(base, ".e2e.") ||
 		strings.Contains(base, "_test.") || strings.HasPrefix(base, "test_") || anyOf(dirs, testDirs)
 }
 

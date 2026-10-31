@@ -89,3 +89,16 @@ func TestReadingOrderChecksTheTestImportsItsSubject(t *testing.T) {
 		t.Errorf("tests_not_importing_subject = %+v", s.TestsNotImportingSubject)
 	}
 }
+
+func TestAnEndToEndTestIsPairedWithoutImportingItsSubject(t *testing.T) {
+	s := Build(Input{Files: []File{
+		{Path: "src/api/webhook.ts"},
+		{Path: "src/api/webhook.e2e.ts"},
+	}, Reach: Reach{Imports: map[string][]string{"src/api/webhook.e2e.ts": {"src/fixtures.ts"}}}})
+	if len(s.TestsNotImportingSubject) != 0 {
+		t.Errorf("an end-to-end test drives the app, not imports: tests_not_importing_subject = %+v", s.TestsNotImportingSubject)
+	}
+	if len(s.ReadingOrder) != 2 || s.ReadingOrder[0].Path != "src/api/webhook.e2e.ts" || !strings.Contains(s.ReadingOrder[0].Why, "test of src/api/webhook.ts") {
+		t.Errorf("reading order = %+v, want the e2e test paired before src/api/webhook.ts", s.ReadingOrder)
+	}
+}

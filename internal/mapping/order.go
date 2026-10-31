@@ -16,7 +16,8 @@ type ReadingEntry struct {
 // readingOrder puts read-first files first (one-way doors before impact), then skim, then skip.
 // A test goes right before the file it tests, in that file's section; a test whose subject is
 // not in the change opens the skim section. When imports are known, a test is paired with its namesake
-// only if it imports it; otherwise it is reported as a mismatch.
+// only if it imports it; otherwise it is reported as a mismatch. An end-to-end test drives the running
+// app instead of importing it, so it is paired by name alone.
 func readingOrder(files []File, imports map[string][]string) ([]ReadingEntry, []TestMismatch) {
 	var code, tests []File
 	for _, f := range files {
@@ -45,7 +46,7 @@ func readingOrder(files []File, imports map[string][]string) ([]ReadingEntry, []
 	mismatches := []TestMismatch{}
 	for _, t := range tests {
 		subject, ok := subjectOf(t.Path, code)
-		if imps, known := imports[t.Path]; ok && known && !contains(imps, subject) {
+		if imps, known := imports[t.Path]; ok && known && !isEndToEnd(t.Path) && !contains(imps, subject) {
 			why[t.Path] = "named like a test of " + subject + " but does not import " + subject + ": it may not exercise it"
 			mismatches = append(mismatches, TestMismatch{Test: t.Path, Subject: subject, Line: t.FirstLine})
 			ok = false
@@ -123,7 +124,7 @@ func subjectOf(test string, code []File) (string, bool) {
 
 func testStem(base string) string {
 	base = strings.TrimPrefix(base, "test_")
-	for _, marker := range []string{".test.", ".spec.", "_test."} {
+	for _, marker := range []string{".test.", ".spec.", ".e2e.", "_test."} {
 		if i := strings.Index(base, marker); i >= 0 {
 			return base[:i]
 		}
@@ -142,3 +143,5 @@ func codeStem(base string) string {
 func isTestPath(p string) bool {
 	return isTest(strings.ToLower(path.Base(p)), dirSegments(p))
 }
+
+func isEndToEnd(p string) bool { return strings.Contains(strings.ToLower(path.Base(p)), ".e2e.") }
