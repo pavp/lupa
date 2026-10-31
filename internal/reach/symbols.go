@@ -131,8 +131,10 @@ func (s scan) callers(file string, src []byte, d lang.Decl) ([]Site, error) {
 
 type export struct{ file, name string }
 
-// carriers returns every module and name that exports the declaration: the file itself, then the barrels
-// whose re-exports chain back to it. `export *` never carries a default export.
+// carriers returns every module and name that may export the declaration: the file itself, the barrels whose
+// re-exports chain back to it, and each importer under its local name, which a consumer can import only when
+// the importer exports it. `export *` never carries a default; `export default x` and a renamed local export
+// are not followed.
 func (s scan) carriers(file, name string, importers []string) (map[export]bool, error) {
 	carried := map[export]bool{{file, name}: true}
 	for grew := true; grew; {
@@ -143,9 +145,6 @@ func (s scan) carriers(file, name string, importers []string) (map[export]bool, 
 				return nil, err
 			}
 			for _, b := range s.Symbols.Bindings(isrc) {
-				if !b.Reexport {
-					continue
-				}
 				to, status := s.Resolver.Resolve(imp, b.Spec)
 				if status != lang.Resolved {
 					continue
