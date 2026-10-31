@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -123,6 +124,8 @@ func TestReviewErrors(t *testing.T) {
 		{"unknown agent", []string{"review", "feature", "--yes", "--agent", "other"}, "unknown agent \"other\""},
 		{"agent without a name", []string{"review", "feature", "--yes", "--agent"}, "flag \"--agent\" needs a value"},
 		{"pi extensions for another agent", []string{"review", "feature", "--yes", "--pi-extensions", "/ext"}, "--pi-extensions needs --agent pi"},
+		{"effort for another agent", []string{"review", "feature", "--yes", "--agent", "pi", "--effort", "low"}, "--effort needs --agent claude"},
+		{"orchestration for another agent", []string{"review", "feature", "--yes", "--agent", "pi", "--orchestrate"}, "--orchestrate needs --agent claude"},
 		{"unknown flag", []string{"review", "feature", "--plan", "--bogus"}, "unknown flag \"--bogus\""},
 		{"missing target", []string{"review", "--plan"}, "missing target"},
 	}
@@ -237,7 +240,7 @@ func TestReviewRunJSON(t *testing.T) {
 	t.Setenv("TMPDIR", tmp)
 	dir, base, head := newRunRepo(t)
 	var reqs []agent.Request
-	code, stdout, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json")
+	code, stdout, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json", "--orchestrate")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
@@ -284,6 +287,42 @@ func TestReviewRunJSON(t *testing.T) {
 	}
 }
 
+func TestReviewRunPipelineByDefault(t *testing.T) {
+	cases := []struct {
+		name   string
+		flags  []string
+		stages map[string]int
+	}{
+		{"one reviewer run per group, no investigator", nil, map[string]int{"review": 1}},
+		{"--investigate adds an investigator per finding", []string{"--investigate"}, map[string]int{"review": 1, "investigate": 1}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			dir, _, _ := newRunRepo(t)
+			var reqs []agent.Request
+			code, stdout, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), append([]string{"review", "feature", "--yes", "--json"}, c.flags...)...)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			var r reviewOut
+			if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+				t.Fatalf("not JSON: %v\n%s", err, stdout)
+			}
+			if len(r.Findings) != 1 || r.Findings[0].File != "b.go" {
+				t.Errorf("findings = %+v, want the b.go finding", r.Findings)
+			}
+			got := map[string]int{}
+			for k, v := range r.Usage.Stages {
+				got[k] = v.Calls
+			}
+			if !reflect.DeepEqual(got, c.stages) || slices.ContainsFunc(reqs, func(q agent.Request) bool { return q.Subagents }) {
+				t.Errorf("stages = %v, subagents asked: %v; want %v and no session", got, slices.ContainsFunc(reqs, func(q agent.Request) bool { return q.Subagents }), c.stages)
+			}
+		})
+	}
+}
+
 func TestReviewRunConventionsFromBase(t *testing.T) {
 	t.Setenv("TMPDIR", t.TempDir())
 	dir, _, _ := newRunRepo(t)
@@ -294,6 +333,9 @@ func TestReviewRunConventionsFromBase(t *testing.T) {
 	}
 	if reqs[0].Subagents {
 		t.Errorf("a Pi review asked for subagents")
+	}
+	if !slices.ContainsFunc(reqs, func(q agent.Request) bool { return strings.Contains(q.Prompt, "Investigate the candidate defect") }) {
+		t.Errorf("a Pi review ran no investigator; Pi keeps it by default")
 	}
 	prompt := reqs[0].Prompt
 	if !strings.Contains(prompt, "Path: AGENTS.md\n\nBASE-RULE: use tabs") {
@@ -419,23 +461,24 @@ func TestReviewRunExitsOneWhenNoGroupIsReviewed(t *testing.T) {
 
 func TestAgentOf(t *testing.T) {
 	cases := []struct {
-		name, agentName, model, extensions string
-		want                               agent.Agent
+		name, agentName, model, extensions, effort string
+		want                                       agent.Agent
 	}{
-		{"claude by default model", "claude", "", "", claude.Adapter{}},
-		{"claude with a model", "claude", "opus", "", claude.Adapter{Model: "opus"}},
-		{"pi with a model and its provider", "pi", "prov/flash", "/ext/provider, /ext/other", pi.Adapter{Model: "prov/flash", Extensions: []string{"/ext/provider", "/ext/other"}}},
-		{"pi with no extensions", "pi", "", "", pi.Adapter{}},
+		{"claude by default model", "claude", "", "", "", claude.Adapter{}},
+		{"claude with a model", "claude", "opus", "", "", claude.Adapter{Model: "opus"}},
+		{"claude with an effort", "claude", "", "", "medium", claude.Adapter{Effort: "medium"}},
+		{"pi with a model and its provider", "pi", "prov/flash", "/ext/provider, /ext/other", "", pi.Adapter{Model: "prov/flash", Extensions: []string{"/ext/provider", "/ext/other"}}},
+		{"pi with no extensions", "pi", "", "", "", pi.Adapter{}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := agentOf(c.agentName, c.model, c.extensions)
+			got, err := agentOf(c.agentName, c.model, c.extensions, c.effort)
 			if err != nil || !reflect.DeepEqual(got, c.want) {
 				t.Errorf("agentOf = %#v, %v; want %#v", got, err, c.want)
 			}
 		})
 	}
-	if _, err := agentOf("other", "", ""); err == nil || !strings.Contains(err.Error(), `unknown agent "other"`) {
+	if _, err := agentOf("other", "", "", ""); err == nil || !strings.Contains(err.Error(), `unknown agent "other"`) {
 		t.Errorf("err = %v, want unknown agent", err)
 	}
 }
@@ -447,6 +490,17 @@ func TestReviewPlanTextKeepsTheAgentFlags(t *testing.T) {
 		t.Fatalf("exit %d, stderr %q", code, stderr)
 	}
 	if want := "Then run the agent review: lupa review feature --yes --agent pi --model prov/flash --pi-extensions '/ext/my provider'"; !strings.Contains(stdout, want) {
+		t.Errorf("plan lacks %q:\n%s", want, stdout)
+	}
+}
+
+func TestReviewPlanTextKeepsTheReviewFlags(t *testing.T) {
+	dir, _, _ := newReviewRepo(t)
+	code, stdout, stderr := lupa(dir, "review", "feature", "--plan", "--orchestrate", "--investigate", "--effort", "low")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if want := "Then run the agent review: lupa review feature --yes --effort low --orchestrate --investigate"; !strings.Contains(stdout, want) {
 		t.Errorf("plan lacks %q:\n%s", want, stdout)
 	}
 }

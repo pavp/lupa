@@ -65,12 +65,21 @@ func TestPlan(t *testing.T) {
 			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "a/y.go", Status: Reviewed, Groups: []int{2}}},
 		},
 		{
-			name:    "different directories get separate groups, however small",
+			name:    "a change that fits the budget is one group across directories",
 			files:   []mapping.File{file("b/y.go"), file("a/x.go")},
 			patches: map[string]string{"a/x.go": hunk(1, 20), "b/y.go": hunk(1, 20)},
 			budget:  1000,
-			groups:  []string{"1:a/x.go", "2:b/y.go"},
-			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "b/y.go", Status: Reviewed, Groups: []int{2}}},
+			groups:  []string{"1:a/x.go|b/y.go"},
+			ledger:  []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "b/y.go", Status: Reviewed, Groups: []int{1}}},
+		},
+		{
+			name:    "a change over the budget is cut by directory first",
+			files:   []mapping.File{file("a/x.go"), file("a/y.go"), file("b/z.go")},
+			patches: map[string]string{"a/x.go": hunk(1, 40), "a/y.go": hunk(1, 30), "b/z.go": hunk(1, 30)},
+			budget:  90,
+			groups:  []string{"1:a/x.go|a/y.go", "2:b/z.go"},
+			ledger: []Entry{{Path: "a/x.go", Status: Reviewed, Groups: []int{1}}, {Path: "a/y.go", Status: Reviewed, Groups: []int{1}},
+				{Path: "b/z.go", Status: Reviewed, Groups: []int{2}}},
 		},
 		{
 			name:    "a file over the budget is split by hunks",
@@ -152,7 +161,8 @@ func TestPlanEstimate(t *testing.T) {
 	if r.Budget != DefaultBudget {
 		t.Errorf("budget = %d, want %d", r.Budget, DefaultBudget)
 	}
-	want := Estimate{Runs: 3, Tokens: (15000+4000+3)/4 + (50+4000+3)/4 + 2*ReadingTokens}
+	// The change fits the budget, so it is one group: one reviewer run and the investigator.
+	want := Estimate{Runs: 2, Tokens: (15000+50+4000+3)/4 + ReadingTokens}
 	if r.Estimate != want {
 		t.Errorf("estimate = %+v, want %+v", r.Estimate, want)
 	}

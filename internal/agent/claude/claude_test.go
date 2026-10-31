@@ -108,6 +108,23 @@ func TestRunMapsSuccessEnvelope(t *testing.T) {
 	}
 }
 
+func TestRunEffortAndCacheTTL(t *testing.T) {
+	dir := t.TempDir()
+	bin := fakeClaude(t, dir, "printf '%s' \"$CLAUDE_CODE_PROMPT_CACHE_TTL\" > '"+dir+"/ttl'; printf '%s' '"+successEnvelope+"'")
+	t.Setenv("CLAUDE_CODE_PROMPT_CACHE_TTL", "1h")
+
+	if _, err := (Adapter{Bin: bin, Effort: "medium"}).Run(context.Background(), agent.Request{Dir: dir, Prompt: "p"}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	args := strings.Split(readFile(t, filepath.Join(dir, "args")), "\n")
+	if i := slices.Index(args, "--effort"); i < 0 || args[i+1] != "medium" {
+		t.Errorf("args = %q, want --effort medium", args)
+	}
+	if ttl := readFile(t, filepath.Join(dir, "ttl")); ttl != "5m" {
+		t.Errorf("prompt cache TTL = %q, want 5m whatever the user's environment says", ttl)
+	}
+}
+
 func TestRunPrefersStructuredOutput(t *testing.T) {
 	envelope := `{"type":"result","subtype":"success","is_error":false,"result":"Here it is: {\"a\":1}","structured_output":{"a":1},"usage":{"input_tokens":2,"cache_creation_input_tokens":1150,"cache_read_input_tokens":30,"output_tokens":5}}`
 	dir := t.TempDir()

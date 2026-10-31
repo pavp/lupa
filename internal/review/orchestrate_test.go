@@ -85,7 +85,7 @@ func TestOrchestrateKeepsEachValidationWithItsComment(t *testing.T) {
 	in, _ := orchestrateInput(t, func(agent.Request) (string, error) {
 		return sessionAnswer(groups, map[int][]string{1: {"lib/tax.ts"}, 2: {}}), nil
 	})
-	in.Plan = runPlan(Options{Budget: 2000})
+	in.Plan = runPlan(Options{Budget: twoGroups})
 	res := orchestrate(context.Background(), in, in.Agent)
 
 	if len(res) != 2 || res[0].reason != "" || res[1].reason != "" {
@@ -131,7 +131,7 @@ func TestOrchestrateRetriesOnceAndReportsWhatItCouldNotReview(t *testing.T) {
 				}
 				return tt.replies[n-1], nil
 			})
-			in.Plan = runPlan(Options{Budget: 2000})
+			in.Plan = runPlan(Options{Budget: twoGroups})
 			res := orchestrate(context.Background(), in, in.Agent)
 
 			if fake.Calls() != tt.calls || len(res) != len(tt.reasons) {
@@ -169,7 +169,7 @@ func TestRunOrchestratedDecidesEachCandidateWithTheInvestigatorsRules(t *testing
 		}
 		return sessionAnswer(groups, map[int][]string{1: {"lib/tax.ts"}, 2: {"src/cart.ts"}}), nil
 	}}
-	in := (&fakeRun{}).input(runPlan(Options{Budget: 2000}))
+	in := (&fakeRun{}).input(runPlan(Options{Budget: twoGroups}))
 	in.Agent, in.Dir, in.Orchestrate = billed{fake}, t.TempDir(), true
 	out := Run(context.Background(), in)
 
@@ -200,7 +200,7 @@ func TestRunOrchestratedDecidesEachCandidateWithTheInvestigatorsRules(t *testing
 
 func TestRunOrchestratedMarksGroupsItCouldNotReview(t *testing.T) {
 	fake := &agent.Fake{Reply: func(agent.Request) (string, error) { return "", errors.New("exit status 1") }}
-	in := (&fakeRun{}).input(runPlan(Options{Budget: 2000}))
+	in := (&fakeRun{}).input(runPlan(Options{Budget: twoGroups}))
 	in.Agent, in.Dir, in.Orchestrate = fake, t.TempDir(), true
 	out := Run(context.Background(), in)
 

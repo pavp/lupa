@@ -34,6 +34,9 @@ type RunInput struct {
 	// Orchestrate reviews every group in one agent session with reviewer and validator subagents,
 	// for an agent that can run them; the code checks stay the same.
 	Orchestrate bool
+	// Investigate gives each candidate its own investigator run, which may refute it; off, every anchored
+	// candidate is reported.
+	Investigate bool
 }
 
 // DefaultParallel is how many reviewer runs go at once when RunInput.Parallel is zero.
@@ -165,9 +168,14 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	}
 	candidates := slices.DeleteFunc(slices.Clone(merged), followUp)
 	var inv InvestigateResult
-	if in.Orchestrate {
+	switch {
+	case in.Orchestrate:
 		inv = validate(candidates, in.Head)
-	} else {
+	case !in.Investigate:
+		for _, c := range candidates {
+			inv.Confirmed = append(inv.Confirmed, Investigated{Finding: c})
+		}
+	default:
 		inv = Investigate(ctx, InvestigateInput{Agent: ag.at(UsageInvestigate), Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
 			Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
 	}

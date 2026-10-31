@@ -76,9 +76,10 @@ type Result struct {
 }
 
 // Plan selects the reviewable files and packs their patches, keyed by path, into groups under the byte budget.
-// Files of one directory share a group while they fit; directories never share one, since fuller groups
-// were measured to find about half the defects. A file over the budget is split by hunks, and only a hunk
-// that alone exceeds the budget is left out.
+// A change whose reviewable patches fit the budget is one group, so one reviewer sees both sides of a contract
+// that crosses directories, which separate groups were measured to miss. A larger change is cut by directory
+// first, then by the budget. A file over the budget is split by hunks, and only a
+// hunk that alone exceeds the budget is left out.
 func Plan(files []mapping.File, patches map[string]string, opts Options) Result {
 	budget := cmp.Or(opts.Budget, DefaultBudget)
 	r := Result{Budget: budget, Groups: []Group{}, Ledger: []Entry{}}
@@ -86,6 +87,13 @@ func Plan(files []mapping.File, patches map[string]string, opts Options) Result 
 	slices.SortFunc(sorted, func(a, b mapping.File) int {
 		return cmp.Or(cmp.Compare(path.Dir(a.Path), path.Dir(b.Path)), cmp.Compare(a.Path, b.Path))
 	})
+	total := 0
+	for _, f := range sorted {
+		if f.Class != mapping.Skip && !f.Binary && !isDoc(f.Path) {
+			total += len(patches[f.Path])
+		}
+	}
+	whole := total <= budget
 	dir := ""
 	for _, f := range sorted {
 		switch {
@@ -106,7 +114,7 @@ func Plan(files []mapping.File, patches map[string]string, opts Options) Result 
 		reviewed := Entry{Path: f.Path, Status: Reviewed}
 		for _, p := range parts {
 			n := len(r.Groups)
-			if n == 0 || path.Dir(f.Path) != dir || r.Groups[n-1].Bytes+p.Bytes > budget {
+			if n == 0 || (!whole && path.Dir(f.Path) != dir) || r.Groups[n-1].Bytes+p.Bytes > budget {
 				r.Groups = append(r.Groups, Group{ID: n + 1, Parts: []Part{}})
 				n++
 			}

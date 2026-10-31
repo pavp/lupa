@@ -52,7 +52,7 @@ func TestBuildPromptUserContent(t *testing.T) {
 		"expect about 5 to 10 candidates per group", "read callers and callees with your tools",
 		"Severity: severe when the change causes it and realistic input reaches it with an observable harm; otherwise a warning.",
 		"Style is not a candidate.",
-		"pre-existing issues", "nitpicks", "anything a linter catches", "general quality or test coverage remarks", "outside this group",
+		"pre-existing issues", "nitpicks", "anything a linter catches", "general quality or test coverage remarks",
 		`"files_inspected"`, `"comments"`, `"file"`, `"severity"`, `"claim"`, `"mechanism"`, `"fix"`, `"quote"`, `"quote_settles"`,
 		"ONE JSON object and nothing else",
 		"An empty `comments` list is right only when the change has no logic that could break.",
@@ -61,6 +61,9 @@ func TestBuildPromptUserContent(t *testing.T) {
 		if !strings.Contains(user, want) {
 			t.Errorf("user message lacks %q", want)
 		}
+	}
+	if strings.Contains(user, "outside this group") {
+		t.Errorf("user message still excludes defects outside the group:\n%s", user)
 	}
 }
 

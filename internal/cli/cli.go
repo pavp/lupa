@@ -30,7 +30,7 @@ import (
 	"github.com/pavp/lupa/internal/verify"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.
@@ -329,10 +329,16 @@ func evidenceJSON(es []review.Evidence) []review.Evidence {
 	return out
 }
 
-// agentFlagsOf repeats the agent flags a review was given, quoted for a shell, so a suggested command runs the same agent.
-func agentFlagsOf(name, model, extensions string) string {
+// reviewFlags are the flags that choose how a review runs.
+type reviewFlags struct {
+	agent, model, extensions, effort string
+	orchestrate, investigate         bool
+}
+
+// agentFlagsOf repeats the flags a review was given, quoted for a shell, so a suggested command runs the same review.
+func agentFlagsOf(r reviewFlags) string {
 	var b strings.Builder
-	for _, f := range [][2]string{{"--agent", name}, {"--model", model}, {"--pi-extensions", extensions}} {
+	for _, f := range [][2]string{{"--agent", r.agent}, {"--model", r.model}, {"--pi-extensions", r.extensions}, {"--effort", r.effort}} {
 		if f[1] == "" || (f[0] == "--agent" && f[1] == "claude") {
 			continue
 		}
@@ -342,14 +348,20 @@ func agentFlagsOf(name, model, extensions string) string {
 		}
 		fmt.Fprintf(&b, " %s %s", f[0], v)
 	}
+	if r.orchestrate {
+		b.WriteString(" --orchestrate")
+	}
+	if r.investigate {
+		b.WriteString(" --investigate")
+	}
 	return b.String()
 }
 
 // agentOf builds the named agent's adapter; extensions is a comma-separated list of Pi extension paths.
-func agentOf(name, model, extensions string) (agent.Agent, error) {
+func agentOf(name, model, extensions, effort string) (agent.Agent, error) {
 	switch name {
 	case "claude":
-		return claude.Adapter{Model: model}, nil
+		return claude.Adapter{Model: model, Effort: effort}, nil
 	case "pi":
 		var exts []string
 		for _, e := range strings.Split(extensions, ",") {
@@ -363,16 +375,25 @@ func agentOf(name, model, extensions string) (agent.Agent, error) {
 }
 
 func runReview(args []string, env Env) error {
-	asJSON, planOnly, yes, agentName, model, extensions := false, false, false, "claude", "", ""
-	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes},
-		map[string]*string{"--agent": &agentName, "--model": &model, "--pi-extensions": &extensions})
+	asJSON, planOnly, yes := false, false, false
+	fl := reviewFlags{agent: "claude"}
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes, "--orchestrate": &fl.orchestrate, "--investigate": &fl.investigate},
+		map[string]*string{"--agent": &fl.agent, "--model": &fl.model, "--pi-extensions": &fl.extensions, "--effort": &fl.effort})
 	if err != nil {
 		return err
 	}
-	if extensions != "" && agentName != "pi" {
+	agentName := fl.agent
+	switch {
+	case fl.extensions != "" && agentName != "pi":
 		return usageError{"--pi-extensions needs --agent pi"}
+	case fl.effort != "" && agentName != "claude":
+		return usageError{"--effort needs --agent claude"}
+	case fl.orchestrate && agentName != "claude":
+		return usageError{"--orchestrate needs --agent claude"}
 	}
-	adapter, err := agentOf(agentName, model, extensions)
+	// Pi keeps the investigator it always had; for Claude Code it is opt-in.
+	investigate := fl.investigate || agentName == "pi"
+	adapter, err := agentOf(agentName, fl.model, fl.extensions, fl.effort)
 	if err != nil {
 		return err
 	}
@@ -387,10 +408,15 @@ func runReview(args []string, env Env) error {
 	conventions := conventionsOf(repo, signals.Base)
 	empty := review.BuildPrompt(review.PromptInput{Conventions: conventions})
 	plan := review.Plan(signals.Files, patches, review.Options{Overhead: len(empty.System) + len(empty.User)})
-	// Claude Code can run subagents, so one session reviews and validates every group; Pi keeps one run per step.
-	orchestrate := agentName == "claude"
-	if orchestrate && len(plan.Groups) > 0 {
+	// One session reviews and validates every group with Claude Code subagents; otherwise one run per group, plus
+	// the investigators when asked for.
+	orchestrate := fl.orchestrate
+	switch {
+	case len(plan.Groups) == 0:
+	case orchestrate:
 		plan.Estimate.Runs = 1
+	case !investigate:
+		plan.Estimate.Runs = len(plan.Groups)
 	}
 	sentences, claimPatches := uncheckedClaims(signals, patches)
 	if len(sentences) > 0 {
@@ -408,7 +434,7 @@ func runReview(args []string, env Env) error {
 		return err
 	}
 	if !asJSON {
-		if _, err := io.WriteString(env.Stdout, planText(plan, target, agentFlagsOf(agentName, model, extensions), !yes)); err != nil {
+		if _, err := io.WriteString(env.Stdout, planText(plan, target, agentFlagsOf(fl), !yes)); err != nil {
 			return err
 		}
 	}
@@ -439,7 +465,7 @@ func runReview(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag, Orchestrate: orchestrate,
+	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate,
 		Sentences: sentences, ClaimPatches: claimPatches})
 	if err != nil {
 		return err
