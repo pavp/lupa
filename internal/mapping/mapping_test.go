@@ -30,3 +30,25 @@ func TestBuild(t *testing.T) {
 		})
 	}
 }
+
+func TestImpactByCallSites(t *testing.T) {
+	files := []File{{Path: "src/a.ts", Additions: 1}, {Path: "src/b.ts", Additions: 1}, {Path: "src/c.go", Additions: 1}}
+	reach := Reach{
+		Importers: map[string][]string{"src/a.ts": {"x.ts", "y.ts"}, "src/b.ts": {"z.ts"}, "src/c.go": {"d.go"}},
+		// a.ts's changed declarations have no caller outside the change; b.ts's have one; c.go is not analyzed.
+		Calls: map[string][]string{"src/a.ts": nil, "src/b.ts": {"z.ts:3"}},
+	}
+	got := map[string]File{}
+	for _, f := range Build(Input{Files: files, Reach: reach}).Files {
+		got[f.Path] = f
+	}
+	if a := got["src/a.ts"]; a.Risk == Impact {
+		t.Errorf("a.ts = %+v, want no impact: importers reach the file but no caller of what changed", a)
+	}
+	if b := got["src/b.ts"]; b.Risk != Impact || b.Class != ReadFirst || b.Reason != "1 call site of its changed declarations outside this change" || !reflect.DeepEqual(b.CallSites, []string{"z.ts:3"}) {
+		t.Errorf("b.ts = %+v, want read first by its call site", b)
+	}
+	if c := got["src/c.go"]; c.Risk != Impact || c.Reason != "imported by 1 file outside this change" {
+		t.Errorf("c.go = %+v, want impact by importers where calls are not analyzed", c)
+	}
+}

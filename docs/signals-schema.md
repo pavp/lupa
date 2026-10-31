@@ -17,6 +17,7 @@
 | `files[].reason` | string | Why the rule applied, e.g. `migration or schema: hard to roll back`, `imported by 3 files outside this change`. |
 | `files[].importers` | string[], optional | Files outside the change that reach this one through imports, directly or transitively. |
 | `files[].direct_importers` | string[], optional | The `importers` that import this file themselves; the report names these and counts the rest. |
+| `files[].call_sites` | string[], optional | TS/JS: `file:line` call sites outside the change of the declarations the change touches in this file. When the file's declarations were analyzed, these, not the `importers`, decide its impact: a file whose changed declarations have no caller outside the change is not marked as impact. |
 | `files[].owners` | string[], optional | Owners from the base branch's CODEOWNERS; absent when none. |
 | `size` | object | `files`, `additions`, `deletions`, `changed` (additions + deletions, without lines that only change whitespace) over authored files; `generated_files` counts the skipped generated ones, which add no lines. |
 | `pr` | object or null | For a pull request: `number`, `url`, `title`; null for a branch range. |

@@ -49,10 +49,13 @@ func Markdown(s mapping.Signals) []byte {
 		fmt.Fprintf(&b, "- Rollback: one-way door in `%s`\n", p)
 	}
 	for _, f := range s.Files {
-		if len(f.Importers) > 0 {
+		switch {
+		case len(f.CallSites) > 0:
+			fmt.Fprintf(&b, "- Impact: `%s`: %s: %s\n", f.Path, f.Reason, codes(f.CallSites))
+		case f.Risk == mapping.Impact && len(f.Importers) > 0:
 			fmt.Fprintf(&b, "- Impact: `%s` is imported by %d %s outside this change, %s\n",
 				f.Path, len(f.Importers), plural(len(f.Importers), "file", "files"), directly(f))
-		} else if f.Risk == mapping.Impact {
+		case f.Risk == mapping.Impact:
 			fmt.Fprintf(&b, "- Impact: `%s` (%s)\n", f.Path, f.Reason)
 		}
 	}
@@ -91,7 +94,11 @@ func Markdown(s mapping.Signals) []byte {
 		questions = append(questions, fmt.Sprintf("`%s` is hard to roll back: what is the rollback plan?", p))
 	}
 	for _, f := range s.Files {
-		if len(f.Importers) > 0 {
+		switch {
+		case len(f.CallSites) > 0:
+			questions = append(questions, fmt.Sprintf("`%s` changes declarations called from %d %s outside this change: were they checked?",
+				at(f.Path, f.FirstLine), len(f.CallSites), plural(len(f.CallSites), "place", "places")))
+		case f.Risk == mapping.Impact && len(f.Importers) > 0:
 			questions = append(questions, fmt.Sprintf("`%s` is imported by %d %s outside this change: were they checked?",
 				at(f.Path, f.FirstLine), len(f.Importers), plural(len(f.Importers), "file", "files")))
 		}

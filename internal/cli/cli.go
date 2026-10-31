@@ -147,12 +147,15 @@ func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, 
 	if err != nil {
 		return repo, mapping.Signals{}, "", err
 	}
-	var patches map[string]string
-	if t.pr != nil {
-		if patches, err = repo.Patches(base, head); err != nil {
-			return repo, mapping.Signals{}, "", err
-		}
+	patches, err := repo.Patches(base, head)
+	if err != nil {
+		return repo, mapping.Signals{}, "", err
 	}
+	syms, err := symbolsOf(repo, head, patches)
+	if err != nil {
+		return repo, mapping.Signals{}, "", err
+	}
+	r.Calls = callSitesOf(syms, files)
 	return repo, mapping.Build(mapping.Input{Base: base, Head: head, Files: files, Reach: r, Owners: ownersOf(repo, base, files), PR: prOf(env, t), Patches: patches}), key, nil
 }
 
@@ -910,4 +913,27 @@ func resolveRange(repo git.Repo, target string) (base, head string, err error) {
 		return "", "", err
 	}
 	return base, head, nil
+}
+
+// callSitesOf lists, per changed file with analyzed declarations, the call sites outside the change of the
+// declarations it touches, as sorted file:line; a file with none still gets its key, so it reads as analyzed.
+func callSitesOf(syms map[string][]reach.Symbol, files []mapping.File) map[string][]string {
+	changed := map[string]bool{}
+	for _, f := range files {
+		changed[f.Path] = true
+	}
+	out := map[string][]string{}
+	for file, list := range syms {
+		var sites []string
+		for _, s := range list {
+			for _, c := range s.Callers {
+				if site := fmt.Sprintf("%s:%d", c.File, c.Line); !changed[c.File] && !slices.Contains(sites, site) {
+					sites = append(sites, site)
+				}
+			}
+		}
+		slices.Sort(sites)
+		out[file] = sites
+	}
+	return out
 }

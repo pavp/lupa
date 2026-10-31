@@ -243,9 +243,9 @@ func TestMapReach(t *testing.T) {
 		t.Fatal(err)
 	}
 	badge := got.Files[0]
-	if badge.FirstLine != 1 || badge.Path != "src/Badge.ts" || badge.Class != "read-first" || badge.Reason != "imported by 2 files outside this change" ||
+	if badge.FirstLine != 1 || badge.Path != "src/Badge.ts" || badge.Class != "read-first" || badge.Reason != "1 call site of its changed declarations outside this change" ||
 		strings.Join(badge.Importers, ",") != "src/a.ts,src/index.ts" {
-		t.Errorf("Badge = %+v, want read-first, importers src/a.ts and src/index.ts (src/b.ts is in the change)", badge)
+		t.Errorf("Badge = %+v, want read-first by its call site, importers src/a.ts and src/index.ts (src/b.ts is in the change)", badge)
 	}
 	if len(got.Unresolved) != 1 || got.Unresolved[0].From != "src/Badge.ts" || got.Unresolved[0].Specifier != "./missing" || got.Unresolved[0].Line != 1 {
 		t.Errorf("unresolved = %+v, want ./missing from src/Badge.ts", got.Unresolved)

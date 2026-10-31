@@ -120,8 +120,8 @@ func TestBackendTraps(t *testing.T) {
 		t.Errorf("migration = %s/%s, want read-first one-way-door", class, risk)
 	}
 	if class, _, reason, importers := m.file(t, "src/webhook/handler.ts"); class != "read-first" ||
-		reason != "imported by 2 files outside this change" || importers != "src/jobs/replay.ts,src/server.ts" {
-		t.Errorf("handler = %s %q %s, want read-first imported by src/jobs/replay.ts and src/server.ts", class, reason, importers)
+		reason != "2 call sites of its changed declarations outside this change" || importers != "src/jobs/replay.ts,src/server.ts" {
+		t.Errorf("handler = %s %q %s, want read-first by its 2 call sites, imported by src/jobs/replay.ts and src/server.ts", class, reason, importers)
 	}
 	if class, _, _, importers := m.file(t, "src/config/timeouts.ts"); class != "read-first" || importers != "src/jobs/replay.ts,src/server.ts" {
 		t.Errorf("unmentioned timeout change = %s %s, want read-first, reached directly by src/server.ts and through the handler by src/jobs/replay.ts", class, importers)
@@ -141,7 +141,7 @@ func TestBackendTraps(t *testing.T) {
 	for _, want := range []string{
 		"- Rollback: one-way door in `db/migrations/0042_add_attempts.sql`",
 		"`db/migrations/0042_add_attempts.sql:1` is hard to roll back: what is the rollback plan?",
-		"`src/webhook/handler.ts:3` is imported by 2 files outside this change: were they checked?",
+		"`src/webhook/handler.ts:3` changes declarations called from 2 places outside this change: were they checked?",
 		"- Verification: 1 test file changed (`src/webhook/handler.test.ts`)",
 	} {
 		if !strings.Contains(md, want) {
@@ -190,7 +190,7 @@ func TestFrontendTraps(t *testing.T) {
 	m, md := mapTrap(t, dir)
 
 	if class, _, reason, importers := m.file(t, "src/components/Badge.tsx"); class != "read-first" ||
-		reason != "imported by 4 files outside this change" ||
+		reason != "4 call sites of its changed declarations outside this change" ||
 		importers != "src/components/Header.tsx,src/pages/Cart.tsx,src/pages/Home.tsx,src/pages/Profile.tsx" {
 		t.Errorf("Badge = %s %q %s, want read-first with its four untouched callers", class, reason, importers)
 	}
@@ -203,7 +203,7 @@ func TestFrontendTraps(t *testing.T) {
 	for _, want := range []string{
 		"- Verification: `src/components/Badge.test.tsx` does not import `src/components/Badge.tsx`",
 		"`src/components/Badge.test.tsx:1` is named like a test of `src/components/Badge.tsx` but does not import it: does it exercise it?",
-		"`src/components/Badge.tsx:1` is imported by 4 files outside this change: were they checked?",
+		"`src/components/Badge.tsx:1` changes declarations called from 4 places outside this change: were they checked?",
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("report lacks %q:\n%s", want, md)

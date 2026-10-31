@@ -27,6 +27,8 @@ type File struct {
 	Reason    string `json:"reason"`
 	// Importers are the files outside this change that reach this one through imports, directly or not.
 	Importers []string `json:"importers,omitempty"`
+	// CallSites are the file:line call sites outside the change of the declarations the change touches here.
+	CallSites []string `json:"call_sites,omitempty"`
 	// DirectImporters are the Importers that import this file themselves.
 	DirectImporters []string `json:"direct_importers,omitempty"`
 	// Owners come from the base branch's CODEOWNERS, so a change cannot pick its own reviewers.
@@ -48,6 +50,9 @@ type Reach struct {
 	Unresolved []Unresolved
 	// Imports are the resolved direct imports of changed files; nil when the language is not analyzed.
 	Imports map[string][]string
+	// Calls are, per changed file whose declarations were analyzed, the call sites (file:line) outside the
+	// change of the declarations the change touches; a file absent from it was not analyzed.
+	Calls map[string][]string
 }
 
 // TestMismatch is a test named after a changed file that does not import it, so it may not exercise it.
@@ -166,7 +171,15 @@ func Build(in Input) Signals {
 		f.Importers = reach.Importers[f.Path]
 		f.DirectImporters = reach.Direct[f.Path]
 		f.Owners = in.Owners[f.Path]
-		if len(f.Importers) > 0 && f.Class == Skim {
+		sites, analyzed := reach.Calls[f.Path]
+		f.CallSites = sites
+		// A file's importers say little when its changed declarations have callers known by name: those are the impact.
+		switch {
+		case f.Class != Skim:
+		case analyzed && len(sites) > 0:
+			f.Class, f.Risk = ReadFirst, Impact
+			f.Reason = fmt.Sprintf("%d call %s of its changed declarations outside this change", len(sites), plural(len(sites), "site", "sites"))
+		case !analyzed && len(f.Importers) > 0:
 			f.Class, f.Risk = ReadFirst, Impact
 			f.Reason = fmt.Sprintf("imported by %d %s outside this change", len(f.Importers), plural(len(f.Importers), "file", "files"))
 		}
