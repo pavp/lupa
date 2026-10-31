@@ -41,6 +41,13 @@ func TestClaims(t *testing.T) {
 		}}}},
 		{"template leftovers, code blocks, HTML lines and links are not claims", "## Summary\n<!-- say why -->\n- [x] Tests added\n<details>\n<summary>Possible optimization</summary>\n```\nfetchUser(1)\n```\n</details>\nSee https://example.com/a/b.ts for context",
 			[]Claim{{Text: "See https://example.com/a/b.ts for context", Cites: nil}}},
+		{"an abbreviation does not end a sentence", "The max. of pending cancellations is 100. Once reached, sends fail.", []Claim{
+			{Text: "The max. of pending cancellations is 100.", Cites: nil},
+			{Text: "Once reached, sends fail.", Cites: nil},
+		}},
+		{"template fields, issue links and list lead-ins are not claims",
+			"**Environment**: Staging(main branch) / Production\nFixes #7225\n- Closes #12, #13\nThe solution implemented in this PR:\n- Uses `fetchUser`:",
+			[]Claim{{Text: "Uses `fetchUser`:", Cites: []Cite{{Text: "fetchUser", Found: true, Path: "src/user.ts", Side: "+", Line: 11, Code: "export function fetchUser(id: string) {"}}}}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
