@@ -13,6 +13,7 @@ func TestBuild(t *testing.T) {
 	}{
 		{"no changes", nil, Size{}},
 		{"binary file counts as a file without lines", []File{{Path: "logo.png", Binary: true}, {Path: "a.go", Additions: 3, Deletions: 1}}, Size{Files: 2, Additions: 3, Deletions: 1, Changed: 4}},
+		{"whitespace-only lines are not changed lines", []File{{Path: "a.go", Additions: 30, Deletions: 30, WhitespaceOnly: 50}}, Size{Files: 1, Additions: 30, Deletions: 30, Changed: 10}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

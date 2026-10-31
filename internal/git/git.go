@@ -31,6 +31,8 @@ type FileChange struct {
 	Additions int
 	Deletions int
 	Binary    bool
+	// Authored is the changed lines left when whitespace-only changes are ignored.
+	Authored int
 }
 
 // Repo is a local repository rooted at or below Dir.
@@ -146,6 +148,30 @@ func (r Repo) NumStat(base, head string) ([]FileChange, error) {
 	if err != nil {
 		return nil, err
 	}
+	changes, err := parseNumStat(out)
+	if err != nil {
+		return nil, err
+	}
+	out, err = r.run("diff", "--numstat", "-z", "-w", renames, base, head)
+	if err != nil {
+		return nil, err
+	}
+	spaced, err := parseNumStat(out)
+	if err != nil {
+		return nil, err
+	}
+	authored := map[string]int{}
+	for _, c := range spaced {
+		authored[c.Path] = c.Additions + c.Deletions
+	}
+	for i := range changes {
+		changes[i].Authored = authored[changes[i].Path]
+	}
+	return changes, nil
+}
+
+func parseNumStat(out string) ([]FileChange, error) {
+	var err error
 	var changes []FileChange
 	recs := strings.Split(strings.TrimSuffix(out, "\x00"), "\x00")
 	for i := 0; i < len(recs); i++ {

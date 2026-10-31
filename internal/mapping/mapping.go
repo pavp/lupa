@@ -18,6 +18,8 @@ type File struct {
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 	Binary    bool   `json:"binary,omitempty"`
+	// WhitespaceOnly is the part of Additions and Deletions that only changes whitespace; it is not authored.
+	WhitespaceOnly int `json:"-"`
 	// FirstLine is the first changed line on the head side, 0 when the file was deleted.
 	FirstLine int    `json:"first_line,omitempty"`
 	Class     Class  `json:"class"`
@@ -176,8 +178,8 @@ func Build(in Input) Signals {
 		s.Size.Files++
 		s.Size.Additions += f.Additions
 		s.Size.Deletions += f.Deletions
+		s.Size.Changed += f.Additions + f.Deletions - f.WhitespaceOnly
 	}
-	s.Size.Changed = s.Size.Additions + s.Size.Deletions
 	if in.PR != nil {
 		s.PR = &PRInfo{Number: in.PR.Number, URL: in.PR.URL, Title: in.PR.Title}
 		if s.Claims = claims(in.PR.Body, s.Files, in.Patches); s.Claims == nil {

@@ -140,7 +140,8 @@ func mapChange(env Env, target string) (repo git.Repo, signals mapping.Signals, 
 	}
 	files := make([]mapping.File, len(changes))
 	for i, c := range changes {
-		files[i] = mapping.File{Path: c.Path, OldPath: c.OldPath, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary, FirstLine: firstLines[c.Path]}
+		files[i] = mapping.File{Path: c.Path, OldPath: c.OldPath, Additions: c.Additions, Deletions: c.Deletions, Binary: c.Binary, FirstLine: firstLines[c.Path],
+			WhitespaceOnly: max(0, c.Additions+c.Deletions-c.Authored)}
 	}
 	r, err := reachOf(repo, head, files)
 	if err != nil {
