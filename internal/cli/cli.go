@@ -261,16 +261,31 @@ type droppedJSON struct {
 	Quote  string `json:"quote,omitempty"`
 }
 
+type tallyJSON struct {
+	Calls            int     `json:"calls"`
+	CostUSD          float64 `json:"cost_usd"`
+	InputTokens      int     `json:"input_tokens"`
+	OutputTokens     int     `json:"output_tokens"`
+	CacheReadTokens  int     `json:"cache_read_tokens"`
+	CacheWriteTokens int     `json:"cache_write_tokens"`
+}
+
 type usageJSON struct {
-	Calls        int     `json:"calls"`
-	CostUSD      float64 `json:"cost_usd"`
-	InputTokens  int     `json:"input_tokens"`
-	OutputTokens int     `json:"output_tokens"`
+	tallyJSON
+	Stages map[string]tallyJSON `json:"stages"`
+}
+
+func usageJSONOf(u review.Usage) usageJSON {
+	r := usageJSON{tallyJSON: tallyJSON(u.Tally), Stages: map[string]tallyJSON{}}
+	for k, t := range u.Stages {
+		r.Stages[k] = tallyJSON(t)
+	}
+	return r
 }
 
 func reviewJSONOf(base, head string, out review.RunOutput) reviewJSON {
 	r := reviewJSON{Schema: "lupa.review/v0", Base: base, Head: head, Findings: []findingJSON{}, Refuted: []refutedJSON{},
-		Unconfirmed: []unconfirmedJSON{}, Dropped: []droppedJSON{}, Ledger: []review.Entry{}, Usage: usageJSON(out.Usage), Notes: []string{}}
+		Unconfirmed: []unconfirmedJSON{}, Dropped: []droppedJSON{}, Ledger: []review.Entry{}, Usage: usageJSONOf(out.Usage), Notes: []string{}}
 	for _, e := range out.Ledger {
 		e.Reason = report.Redact(e.Reason)
 		r.Ledger = append(r.Ledger, e)

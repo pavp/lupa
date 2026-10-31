@@ -135,7 +135,7 @@ func TestRunMapsEvents(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	want := agent.Response{Text: `{"comments":[]}`, CostUSD: 0.75, Turns: 2, InputTokens: 2350, OutputTokens: 40}
+	want := agent.Response{Text: `{"comments":[]}`, CostUSD: 0.75, Turns: 2, InputTokens: 2350, OutputTokens: 40, CacheReadTokens: 2000, CacheWriteTokens: 50}
 	if got != want {
 		t.Errorf("Response = %+v, want %+v", got, want)
 	}

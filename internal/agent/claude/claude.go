@@ -115,10 +115,12 @@ func (a Adapter) Run(ctx context.Context, req agent.Request) (agent.Response, er
 	}
 	u := env.Usage
 	return agent.Response{
-		Text:         text,
-		CostUSD:      env.TotalCostUSD,
-		Turns:        env.NumTurns,
-		InputTokens:  u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens,
-		OutputTokens: u.OutputTokens,
+		Text:             text,
+		CostUSD:          env.TotalCostUSD,
+		Turns:            env.NumTurns,
+		InputTokens:      u.InputTokens + u.CacheCreationInputTokens + u.CacheReadInputTokens,
+		OutputTokens:     u.OutputTokens,
+		CacheReadTokens:  u.CacheReadInputTokens,
+		CacheWriteTokens: u.CacheCreationInputTokens,
 	}, nil
 }
