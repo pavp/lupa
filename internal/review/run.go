@@ -3,6 +3,7 @@ package review
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -45,6 +46,8 @@ type RunInput struct {
 	// Investigate gives each candidate its own investigator run, which may refute it; off, every anchored
 	// candidate is reported.
 	Investigate bool
+	// InvestigatorModel is the model of every investigator run; empty keeps the agent's model.
+	InvestigatorModel string
 }
 
 // DefaultParallel is how many reviewer runs go at once when RunInput.Parallel is zero.
@@ -200,7 +203,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 		}
 		if len(doubtful) > 0 {
 			checked := Investigate(ctx, InvestigateInput{Agent: ag.at(UsageInvestigate), Dir: in.Dir, Timeout: in.Timeout, Findings: doubtful,
-				Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
+				Patches: in.Patches, Head: in.Head, Parallel: in.Parallel, Model: in.InvestigatorModel})
 			for _, c := range checked.Confirmed {
 				if c.Finding.Finding.Level == verify.LevelNote {
 					promoted[c.Finding.Finding] = c.Evidence
@@ -215,7 +218,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 		}
 	default:
 		inv = Investigate(ctx, InvestigateInput{Agent: ag.at(UsageInvestigate), Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
-			Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
+			Patches: in.Patches, Head: in.Head, Parallel: in.Parallel, Model: in.InvestigatorModel})
 	}
 	if in.Orchestrate || in.Investigate {
 		for _, c := range inv.Confirmed {
@@ -247,6 +250,9 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	out.Refuted, out.Unconfirmed = inv.Refuted, inv.Unconfirmed
 	out.Claims = claims.Checks
 	out.Notes = append(out.Notes, claims.Notes...)
+	if in.InvestigatorModel != "" && out.Usage.Stages[UsageInvestigate].Calls > 0 {
+		out.Notes = append(out.Notes, fmt.Sprintf("Investigator runs used model %s.", in.InvestigatorModel))
+	}
 	return out
 }
 

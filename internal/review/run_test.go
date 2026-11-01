@@ -718,3 +718,53 @@ func TestRunFoldsAContractBreakIntoTheReviewerFindingOnTheSameLines(t *testing.T
 		})
 	}
 }
+
+func TestRunGivesTheInvestigatorItsOwnModelAndLeavesTheReviewerOnTheAgentDefault(t *testing.T) {
+	for _, investigate := range []bool{false, true} {
+		t.Run(map[bool]string{false: "doubtful notes", true: "every finding"}[investigate], func(t *testing.T) {
+			f := &fakeRun{review: func(string) (string, error) {
+				c := comment("lib/tax.ts", "warning", "rate may be undefined", taxQuote, false)
+				c["harm"] = "wrong_data"
+				return answer([]string{"lib/tax.ts", "src/cart.ts"}, c), nil
+			}}
+			in := f.input(runPlan(Options{}))
+			in.Investigate, in.InvestigatorModel = investigate, "small-model"
+			Run(context.Background(), in)
+
+			models := map[string][]string{}
+			for _, r := range f.reqs {
+				models[r.SystemPrompt] = append(models[r.SystemPrompt], r.Model)
+			}
+			if got := models[investigateSystem]; len(got) == 0 || slices.ContainsFunc(got, func(m string) bool { return m != "small-model" }) {
+				t.Errorf("investigator models = %v, want small-model on every run", got)
+			}
+			for system, got := range models {
+				if system != investigateSystem && slices.ContainsFunc(got, func(m string) bool { return m != "" }) {
+					t.Errorf("models of %.40q = %v, want the agent default", system, got)
+				}
+			}
+		})
+	}
+}
+
+func TestRunNotesTheInvestigatorModelOnlyWhenAnInvestigatorRan(t *testing.T) {
+	for _, c := range []struct {
+		name, harm string
+		want       bool
+	}{{"investigated", "wrong_data", true}, {"nothing to investigate", "none", false}} {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeRun{review: func(string) (string, error) {
+				n := comment("lib/tax.ts", "warning", "rate may be undefined", taxQuote, false)
+				n["harm"] = c.harm
+				return answer([]string{"lib/tax.ts", "src/cart.ts"}, n), nil
+			}}
+			in := f.input(runPlan(Options{}))
+			in.Investigate, in.InvestigatorModel = false, "small-model"
+			out := Run(context.Background(), in)
+
+			if got := slices.Contains(out.Notes, "Investigator runs used model small-model."); got != c.want {
+				t.Errorf("notes = %q, want the investigator model noted: %v", out.Notes, c.want)
+			}
+		})
+	}
+}
