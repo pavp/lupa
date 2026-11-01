@@ -204,6 +204,8 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	default:
 		inv = Investigate(ctx, InvestigateInput{Agent: ag.at(UsageInvestigate), Dir: in.Dir, Timeout: in.Timeout, Findings: candidates,
 			Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
+	}
+	if in.Orchestrate || in.Investigate {
 		for _, c := range inv.Confirmed {
 			if c.Finding.Finding.Level == verify.LevelNote && verify.Observable(c.Finding.Finding.Comment.Harm) {
 				promoted[c.Finding.Finding] = c.Evidence
