@@ -35,7 +35,7 @@ func TestParseRef(t *testing.T) {
 	}
 }
 
-const prJSON = `{"number":482,"url":"https://github.com/acme/shop/pull/482","title":"Fix cart totals","body":"Closes #12","baseRefName":"main","headRefName":"fix-cart","headRefOid":"abc123","closingIssuesReferences":[{"number":12}],"files":[{"path":"src/cart.ts"},{"path":"src/tax.ts"}]}`
+const prJSON = `{"number":482,"url":"https://github.com/acme/shop/pull/482","title":"Fix cart totals","body":"Closes #12","baseRefName":"main","baseRefOid":"def456","headRefName":"fix-cart","headRefOid":"abc123","closingIssuesReferences":[{"number":12}],"files":[{"path":"src/cart.ts"},{"path":"src/tax.ts"}]}`
 
 // fakeGh writes an executable that records its arguments and working directory into dir, then runs body.
 func fakeGh(t *testing.T, dir, body string) string {
@@ -61,7 +61,7 @@ func lines(t *testing.T, path string) []string {
 }
 
 func TestPR(t *testing.T) {
-	fields := "number,url,title,body,baseRefName,headRefName,headRefOid,closingIssuesReferences,files"
+	fields := "number,url,title,body,baseRefName,baseRefOid,headRefName,headRefOid,closingIssuesReferences,files"
 	tests := []struct {
 		name string
 		ref  Ref
@@ -83,8 +83,8 @@ func TestPR(t *testing.T) {
 				t.Errorf("args = %q, want %q", got, want)
 			}
 			want := PR{Ref: Ref{Host: "github.com", Owner: "acme", Repo: "shop", Number: 482}, Title: "Fix cart totals", Body: "Closes #12",
-				BaseRef: "main", HeadRef: "fix-cart", HeadSHA: "abc123", LinkedIssues: 1, Files: []string{"src/cart.ts", "src/tax.ts"}}
-			if pr.Ref != want.Ref || pr.Title != want.Title || pr.Body != want.Body || pr.BaseRef != want.BaseRef || pr.HeadRef != want.HeadRef ||
+				BaseRef: "main", BaseSHA: "def456", HeadRef: "fix-cart", HeadSHA: "abc123", LinkedIssues: 1, Files: []string{"src/cart.ts", "src/tax.ts"}}
+			if pr.Ref != want.Ref || pr.Title != want.Title || pr.Body != want.Body || pr.BaseRef != want.BaseRef || pr.BaseSHA != want.BaseSHA || pr.HeadRef != want.HeadRef ||
 				pr.HeadSHA != want.HeadSHA || pr.LinkedIssues != want.LinkedIssues || !slices.Equal(pr.Files, want.Files) {
 				t.Errorf("PR = %+v, want %+v", pr, want)
 			}

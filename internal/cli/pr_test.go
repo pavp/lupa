@@ -97,6 +97,24 @@ func TestMapPRFromItsClone(t *testing.T) {
 	}
 }
 
+func TestMapPRWhoseBaseBranchWasDeleted(t *testing.T) {
+	clone, base, head := newPRClone(t)
+	forge := prForge(head)
+	forge.pr.BaseRef, forge.pr.BaseSHA = "stack-base", base
+
+	code, stdout, stderr := lupaWith(clone, forge, "map", "7", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr: %s", code, stderr)
+	}
+	var got signals
+	if err := json.Unmarshal([]byte(stdout), &got); err != nil {
+		t.Fatalf("stdout is not JSON: %v", err)
+	}
+	if got.Base != base || got.Head != head {
+		t.Errorf("range = %s..%s, want %s..%s from the PR's base commit", got.Base[:7], got.Head[:7], base[:7], head[:7])
+	}
+}
+
 func TestReviewPlanOfAPR(t *testing.T) {
 	clone, _, head := newPRClone(t)
 	code, stdout, stderr := lupaWith(clone, prForge(head), "review", "7", "--plan")
