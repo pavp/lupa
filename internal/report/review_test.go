@@ -284,3 +284,15 @@ func TestReviewShortensALongCitedLine(t *testing.T) {
 		t.Errorf("review does not shorten the cited line to 120 characters:\n%s", got)
 	}
 }
+
+func TestReviewListsWhereElseAMergedFindingWasSeen(t *testing.T) {
+	in := sampleReview()
+	in.Out.Findings[1].Also = []verify.Location{{File: "src/checkout.ts", Side: "new", Start: 30, End: 31}}
+	in.Out.Findings[0].Also = []verify.Location{{File: "src/legacy.ts", Side: "new", Start: 7, End: 7}}
+	got := string(Review(in))
+	for _, want := range []string{"`src/cart.ts:5-6` (also `src/checkout.ts:30-31`)", "`src/old.ts:40` (also `src/legacy.ts:7`)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lacks %q:\n%s", want, got)
+		}
+	}
+}

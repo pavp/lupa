@@ -145,9 +145,78 @@ func TestDedupe(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := Dedupe(tt.in)
+			got, _ := Dedupe(tt.in)
 			if !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("Dedupe() =\n%+v\nwant\n%+v", got, tt.want)
+			}
+		})
+	}
+}
+
+func harmed(file string, start int, level, harm, claim string) Finding {
+	f := finding(file, "new", start, start, level, claim)
+	f.Comment.Harm = harm
+	return f
+}
+
+func TestDedupeAcrossFiles(t *testing.T) {
+	const (
+		staleA = "useRemoveUser drops the invalidateQueries promise so the list goes stale"
+		staleB = "useRemoveUser drops the invalidateQueries promise, the list stays stale"
+	)
+	tests := []struct {
+		name string
+		in   []Finding
+		want []Finding
+		also [][]Location
+	}{
+		{
+			name: "one defect seen from two files merges and keeps both locations",
+			in: []Finding{
+				harmed("src/api/users.ts", 12, LevelImportant, "wrong_data", staleA),
+				harmed("src/ui/DeleteButton.tsx", 30, LevelBlocking, "wrong_data", staleB),
+			},
+			want: []Finding{func() Finding {
+				f := harmed("src/ui/DeleteButton.tsx", 30, LevelBlocking, "wrong_data", staleB)
+				f.Merged = 1
+				return f
+			}()},
+			also: [][]Location{{{File: "src/api/users.ts", Side: "new", Start: 12, End: 12}}},
+		},
+		{
+			name: "the same symbol with a different claim stays apart",
+			in: []Finding{
+				harmed("src/api/users.ts", 12, LevelImportant, "wrong_data", staleA),
+				harmed("src/ui/DeleteButton.tsx", 30, LevelImportant, "wrong_data", "useRemoveUser sends the id of the wrong user to the endpoint"),
+			},
+		},
+		{
+			name: "a different harm stays apart",
+			in: []Finding{
+				harmed("src/api/users.ts", 12, LevelImportant, "wrong_data", staleA),
+				harmed("src/ui/DeleteButton.tsx", 30, LevelImportant, "failure", staleB),
+			},
+		},
+		{
+			name: "similar claims without a shared symbol stay apart",
+			in: []Finding{
+				harmed("src/api/users.ts", 12, LevelImportant, "wrong_data", "the hook drops the promise so the list goes stale"),
+				harmed("src/ui/DeleteButton.tsx", 30, LevelImportant, "wrong_data", "the hook drops the promise, the list stays stale"),
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			want, wantAlso := tt.want, tt.also
+			if want == nil {
+				want, wantAlso = tt.in, make([][]Location, len(tt.in))
+			}
+			got, also := Dedupe(tt.in)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("Dedupe =\n%+v\nwant\n%+v", got, want)
+			}
+			if !reflect.DeepEqual(also, wantAlso) {
+				t.Errorf("also = %+v, want %+v", also, wantAlso)
 			}
 		})
 	}

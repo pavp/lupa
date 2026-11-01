@@ -715,3 +715,42 @@ func TestUsageErrorShowsTheCommandsUsage(t *testing.T) {
 		t.Errorf("stderr %q lacks what <pr> means", stderr)
 	}
 }
+
+func TestReviewRunMergesOneDefectSeenFromTwoFiles(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	dir, _, _ := newReviewRepo(t)
+	ag := &agent.Fake{Reply: func(req agent.Request) (string, error) {
+		m := groupPaths.FindStringSubmatch(req.Prompt)
+		if m == nil {
+			return "", fmt.Errorf("unexpected request")
+		}
+		file, quote := "b.go", "var B = 1"
+		if strings.Contains(m[1], "a.txt") {
+			file, quote = "a.txt", "three"
+		}
+		return `{"files_inspected": ` + m[1] + `, "comments": [{"file": "` + file + `", "severity": "warning", "harm": "slow", "claim": "readB() rereads ` + "`B`" + ` on every call after this change", "mechanism": "no cache", "fix": "cache it", "quote": "` + quote + `", "quote_settles": false}]}`, nil
+	}}
+	code, stdout, stderr := lupaRun(dir, "", ag, "review", "feature", "--yes", "--json", "--budget", "200")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	var r struct {
+		Findings []struct {
+			File   string `json:"file"`
+			Merged int    `json:"merged"`
+			Also   []struct {
+				File  string `json:"file"`
+				Start int    `json:"start"`
+			} `json:"also"`
+		} `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	if len(r.Findings) != 1 || r.Findings[0].Merged != 1 || len(r.Findings[0].Also) != 1 {
+		t.Fatalf("findings = %+v, want one finding that merged the other file's", r.Findings)
+	}
+	if got := []string{r.Findings[0].File, r.Findings[0].Also[0].File}; !slices.Contains(got, "a.txt") || !slices.Contains(got, "b.go") {
+		t.Errorf("locations = %v, want a.txt and b.go", got)
+	}
+}

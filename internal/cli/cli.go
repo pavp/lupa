@@ -567,7 +567,16 @@ type findingJSON struct {
 	Quote     string            `json:"quote"`
 	Relocated bool              `json:"relocated"`
 	Merged    int               `json:"merged"`
+	Also      []locationJSON    `json:"also,omitempty"`
 	Evidence  []review.Evidence `json:"evidence,omitempty"`
+}
+
+// locationJSON is another place the same defect was reported, merged into a finding.
+type locationJSON struct {
+	File  string `json:"file"`
+	Side  string `json:"side"`
+	Start int    `json:"start"`
+	End   int    `json:"end"`
 }
 
 type refutedJSON struct {
@@ -646,7 +655,15 @@ func findingJSONOf(a review.Anchored) findingJSON {
 	f, c := a.Finding, a.Finding.Comment
 	return findingJSON{File: f.Location.File, Side: f.Location.Side, Start: f.Location.Start, End: f.Location.End, Severity: c.Severity, Harm: c.Harm,
 		Level: f.Level, Causality: f.Causality, Claim: report.Redact(c.Claim), Mechanism: report.Redact(c.Mechanism), Fix: report.Redact(c.Fix),
-		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged, Evidence: evidenceJSON(a.Evidence), Held: report.Redact(a.Held)}
+		Quote: report.Redact(c.Quote), Relocated: a.Relocated, Merged: f.Merged, Also: alsoJSON(a.Also), Evidence: evidenceJSON(a.Evidence), Held: report.Redact(a.Held)}
+}
+
+func alsoJSON(ls []verify.Location) []locationJSON {
+	var out []locationJSON
+	for _, l := range ls {
+		out = append(out, locationJSON{File: l.File, Side: l.Side, Start: l.Start, End: l.End})
+	}
+	return out
 }
 
 func evidenceJSON(es []review.Evidence) []review.Evidence {
