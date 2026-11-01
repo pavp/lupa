@@ -161,6 +161,20 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			results[i] = reviewOne(ctx, in, ag, g)
 		}()
 	}
+	var units []Group
+	if !in.Orchestrate {
+		units = contractUnits(in.Plan, in.Consumers)
+	}
+	contracts := make([]groupResult, len(units))
+	for i, u := range units {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			limit <- struct{}{}
+			defer func() { <-limit }()
+			contracts[i] = contractOne(ctx, in, ag, u)
+		}()
+	}
 	wg.Wait()
 
 	for i, r := range results {
@@ -173,6 +187,10 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			continue
 		}
 		out.Ledger = markGroup(out.Ledger, r.uninspected, id, reasonUninspected)
+		out.Dropped = append(out.Dropped, r.dropped...)
+		anchored = append(anchored, r.findings...)
+	}
+	for _, r := range contracts {
 		out.Dropped = append(out.Dropped, r.dropped...)
 		anchored = append(anchored, r.findings...)
 	}
@@ -278,35 +296,60 @@ func reviewOne(ctx context.Context, in RunInput, ag meter, g Group) groupResult 
 		return r
 	}
 	r.uninspected = parsed.Uninspected
-	batches := []struct {
-		source   string
-		comments []verify.Comment
-	}{{"", parsed.Comments}}
-	// A second pass checks only the unchanged code that consumes the change: one general pass, even with that code
-	// in front of it, did not propose those breaks. Its comments go through the same anchor and investigator.
-	if cp, ok := BuildContractPrompt(PromptInput{Patch: patch, Paths: paths, Consumers: in.Consumers, Conventions: in.Conventions}); ok {
-		if contract, why := reviewGroup(ctx, ag.at(UsageContract), agent.Request{Dir: in.Dir, SystemPrompt: cp.System, Prompt: cp.User, Timeout: in.Timeout, Schema: reviewSchema}, paths); why == "" {
-			batches = append(batches, struct {
-				source   string
-				comments []verify.Comment
-			}{SourceContract, contract.Comments})
-			parsed.Dropped = append(parsed.Dropped, contract.Dropped...)
-		}
+	r.anchor(ctx, in, ag, g.ID, "", parsed)
+	return r
+}
+
+// contractOne runs the contract pass over one unit: it checks only the unchanged code that consumes the change, since
+// one general pass, even with that code in front of it, did not propose those breaks. A failed run adds nothing.
+func contractOne(ctx context.Context, in RunInput, ag meter, u Group) groupResult {
+	patch, paths := groupPatch(u)
+	r := groupResult{}
+	cp, ok := BuildContractPrompt(PromptInput{Patch: patch, Paths: paths, Consumers: in.Consumers, Conventions: in.Conventions})
+	if !ok {
+		return r
 	}
-	for _, d := range parsed.Dropped {
-		r.dropped = append(r.dropped, Drop{Stage: StageSchema, Group: g.ID, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
-	}
-	for _, b := range batches {
-		res := Anchor(ctx, AnchorInput{Agent: ag.at(UsageAnchor), Dir: in.Dir, Timeout: in.Timeout, Comments: b.comments, Patches: in.Patches, Head: in.Head})
-		for _, d := range res.Dropped {
-			r.dropped = append(r.dropped, Drop{Stage: StageAnchor, Group: g.ID, Reason: d.Reason, Comment: d.Comment})
-		}
-		for _, f := range res.Findings {
-			f.Source = b.source
-			r.findings = append(r.findings, f)
-		}
+	parsed, why := reviewGroup(ctx, ag.at(UsageContract), agent.Request{Dir: in.Dir, SystemPrompt: cp.System, Prompt: cp.User, Timeout: in.Timeout, Schema: reviewSchema}, paths)
+	if why == "" {
+		r.anchor(ctx, in, ag, u.ID, SourceContract, parsed)
 	}
 	return r
+}
+
+// anchor records a parsed answer's dropped comments and anchors the rest as findings from source.
+func (r *groupResult) anchor(ctx context.Context, in RunInput, ag meter, group int, source string, parsed verify.Result) {
+	for _, d := range parsed.Dropped {
+		r.dropped = append(r.dropped, Drop{Stage: StageSchema, Group: group, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
+	}
+	res := Anchor(ctx, AnchorInput{Agent: ag.at(UsageAnchor), Dir: in.Dir, Timeout: in.Timeout, Comments: parsed.Comments, Patches: in.Patches, Head: in.Head})
+	for _, d := range res.Dropped {
+		r.dropped = append(r.dropped, Drop{Stage: StageAnchor, Group: group, Reason: d.Reason, Comment: d.Comment})
+	}
+	for _, f := range res.Findings {
+		f.Source = source
+		r.findings = append(r.findings, f)
+	}
+}
+
+// contractUnits packs, in plan order, the parts of files with consumers into as few units as fit the plan's budget:
+// the pass reads only those files, so a change cut into many groups usually needs one run. A unit keeps the ID of
+// the group its first part came from.
+func contractUnits(plan Result, consumers map[string][]reach.Snippet) []Group {
+	budget := cmp.Or(plan.Budget, DefaultBudget)
+	var units []Group
+	for _, g := range plan.Groups {
+		for _, p := range g.Parts {
+			if len(consumers[p.Path]) == 0 {
+				continue
+			}
+			if n := len(units); n == 0 || units[n-1].Bytes+p.Bytes > budget {
+				units = append(units, Group{ID: g.ID})
+			}
+			u := &units[len(units)-1]
+			u.Parts, u.Bytes = append(u.Parts, p), u.Bytes+p.Bytes
+		}
+	}
+	return units
 }
 
 // reviewGroup runs one reviewer and parses its answer, running it once more when the answer is

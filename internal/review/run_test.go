@@ -768,3 +768,39 @@ func TestRunNotesTheInvestigatorModelOnlyWhenAnInvestigatorRan(t *testing.T) {
 		})
 	}
 }
+
+func TestRunChecksEveryConsumerInOneContractPassWhenTheyFitTheBudget(t *testing.T) {
+	var contract []string
+	var mu sync.Mutex
+	f := &fakeRun{review: func(prompt string) (string, error) {
+		if strings.Contains(prompt, "Check only whether this change breaks code it does not touch") {
+			mu.Lock()
+			contract = append(contract, prompt)
+			mu.Unlock()
+			return answer([]string{"lib/tax.ts", "src/cart.ts"}), nil
+		}
+		if group(prompt, "lib/tax.ts") {
+			return answer([]string{"lib/tax.ts"}), nil
+		}
+		return answer([]string{"src/cart.ts"}), nil
+	}}
+	// Two groups, as a larger change cut by directory, whose files with consumers fit the budget together.
+	plan := runPlan(Options{Budget: twoGroups})
+	plan.Budget = DefaultBudget
+	in := f.input(plan)
+	in.Investigate = false
+	in.Consumers = map[string][]reach.Snippet{
+		"lib/tax.ts":  {{File: "src/invoice.ts", Line: 4, End: 6, Why: "reads rate (line 5)", Code: "a\nconst r = t.rate;\nb"}},
+		"src/cart.ts": {{File: "src/checkout.ts", Line: 8, End: 9, Why: "reads total (line 8)", Code: "const t = total(items);\nc"}},
+	}
+	out := Run(context.Background(), in)
+
+	if len(contract) != 1 || out.Usage.Stages[UsageContract].Calls != 1 {
+		t.Fatalf("contract runs = %d (usage %d), want one for the whole change", len(contract), out.Usage.Stages[UsageContract].Calls)
+	}
+	for _, want := range []string{"src/invoice.ts:4-6", "src/checkout.ts:8-9", "diff --git a/lib/tax.ts", "diff --git a/src/cart.ts"} {
+		if !strings.Contains(contract[0], want) {
+			t.Errorf("the contract prompt lacks %q", want)
+		}
+	}
+}
