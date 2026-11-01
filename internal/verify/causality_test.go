@@ -151,6 +151,27 @@ var movedPatches = map[string]string{
 		"+		return sum + shippingFee(items)",
 		"+}",
 	),
+	"src/legacy.go": lines(
+		"diff --git a/src/legacy.go b/src/legacy.go",
+		"--- a/src/legacy.go",
+		"+++ b/src/legacy.go",
+		"@@ -1,4 +1,1 @@",
+		" package src",
+		"-func Discount(price int) int {",
+		"-	return price * discountPercent / 100",
+		"-}",
+	),
+	"src/pricing.go": lines(
+		"diff --git a/src/pricing.go b/src/pricing.go",
+		"--- a/src/pricing.go",
+		"+++ b/src/pricing.go",
+		"@@ -10,2 +10,5 @@ func Price(p int) int {",
+		" }",
+		"+func Discount(price int) int {",
+		"+	return price * discountPercent / 100",
+		"+}",
+		" ",
+	),
 }
 
 func TestCausalityOfMovedCode(t *testing.T) {
@@ -159,11 +180,12 @@ func TestCausalityOfMovedCode(t *testing.T) {
 		loc  Location
 		want string
 	}{
-		{"lines moved from another file, reindented", Location{File: "src/new.go", Side: "new", Start: 3, End: 5}, CausalityMoved},
+		{"a pure move into a hunk with nothing else changed", Location{File: "src/pricing.go", Side: "new", Start: 11, End: 12}, CausalityMoved},
+		{"moved lines, reindented, in a hunk that also edits code", Location{File: "src/new.go", Side: "new", Start: 3, End: 5}, CausalityMovedWithEdit},
 		{"a moved line next to a changed one", Location{File: "src/new.go", Side: "new", Start: 5, End: 6}, CausalityIntroduced},
 		{"a changed line on its own", Location{File: "src/new.go", Side: "new", Start: 6, End: 6}, CausalityIntroduced},
 		{"a lone brace that also appears removed", Location{File: "src/new.go", Side: "new", Start: 7, End: 7}, CausalityIntroduced},
-		{"a moved line and a short one", Location{File: "src/new.go", Side: "new", Start: 3, End: 4}, CausalityMoved},
+		{"a moved line and a short one in an edited hunk", Location{File: "src/new.go", Side: "new", Start: 3, End: 4}, CausalityMovedWithEdit},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -174,9 +196,16 @@ func TestCausalityOfMovedCode(t *testing.T) {
 	}
 }
 
-func TestLevelOfMovedCodeIsFollowUp(t *testing.T) {
+func TestLevelOfMovedCode(t *testing.T) {
 	c := Comment{Severity: "severe", QuoteSettles: true}
 	if got := Level(c, CausalityMoved); got != LevelFollowUp {
-		t.Errorf("Level(severe, moved) = %q, want %q", got, LevelFollowUp)
+		t.Errorf("Level(severe, moved) = %q, want %q: a pure move keeps the code it moved", got, LevelFollowUp)
+	}
+	// The change chose the new place and edited around it, so the finding is the change's.
+	if got := Level(c, CausalityMovedWithEdit); got != LevelBlocking {
+		t.Errorf("Level(severe, moved-with-edit) = %q, want %q", got, LevelBlocking)
+	}
+	if got := Level(Comment{Severity: "warning"}, CausalityMovedWithEdit); got != LevelNote {
+		t.Errorf("Level(warning, moved-with-edit) = %q, want %q", got, LevelNote)
 	}
 }
