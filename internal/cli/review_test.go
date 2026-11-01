@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/pavp/lupa/internal/agent"
 	"github.com/pavp/lupa/internal/agent/claude"
@@ -533,5 +534,140 @@ func TestReviewRunGivesTheCallersAndCalleesOfChangedSymbols(t *testing.T) {
 	want := "src/load.ts:3-5 load\n  called from: src/page.ts:3\n  calls: slug (src/util.ts:1)\n"
 	if !strings.Contains(reqs[0].Prompt, want) {
 		t.Errorf("the reviewer prompt lacks the changed symbol %q:\n%s", want, reqs[0].Prompt)
+	}
+}
+
+func TestReviewRunSettingsFromFlagsAndEnv(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		args []string
+		want int
+	}{
+		{"default", nil, nil, 60000},
+		{"flag", nil, []string{"--budget", "1000"}, 1000},
+		{"env", map[string]string{"LUPA_BUDGET": "2000"}, nil, 2000},
+		{"flag over env", map[string]string{"LUPA_BUDGET": "2000"}, []string{"--budget", "1000"}, 1000},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			for k, v := range c.env {
+				t.Setenv(k, v)
+			}
+			dir, _, _ := newReviewRepo(t)
+			code, stdout, stderr := lupa(dir, append([]string{"review", "feature", "--plan", "--json"}, c.args...)...)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			var p plan
+			if err := json.Unmarshal([]byte(stdout), &p); err != nil {
+				t.Fatalf("not JSON: %v\n%s", err, stdout)
+			}
+			if p.Budget != c.want {
+				t.Errorf("budget = %d, want %d", p.Budget, c.want)
+			}
+		})
+	}
+}
+
+func TestReviewRunTimeoutReachesEveryRun(t *testing.T) {
+	cases := []struct {
+		name string
+		env  map[string]string
+		args []string
+		want time.Duration
+	}{
+		{"flag", nil, []string{"--timeout", "90s"}, 90 * time.Second},
+		{"env", map[string]string{"LUPA_TIMEOUT": "3m"}, nil, 3 * time.Minute},
+		{"flag over env", map[string]string{"LUPA_TIMEOUT": "3m"}, []string{"--timeout", "90s"}, 90 * time.Second},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			for k, v := range c.env {
+				t.Setenv(k, v)
+			}
+			dir, _, _ := newRunRepo(t)
+			var reqs []agent.Request
+			code, _, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), append([]string{"review", "feature", "--yes", "--json"}, c.args...)...)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			if len(reqs) == 0 {
+				t.Fatal("no agent run")
+			}
+			for _, r := range reqs {
+				if r.Timeout != c.want {
+					t.Errorf("run timeout = %v, want %v", r.Timeout, c.want)
+				}
+			}
+		})
+	}
+}
+
+func TestReviewRunParallelBoundsConcurrentRuns(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	dir, _, _ := newReviewRepo(t)
+	var reqs []agent.Request
+	inner := fakeAgent(t, &reqs).Reply
+	var mu sync.Mutex
+	running, peak := 0, 0
+	ag := &agent.Fake{Reply: func(req agent.Request) (string, error) {
+		mu.Lock()
+		running++
+		peak = max(peak, running)
+		mu.Unlock()
+		time.Sleep(20 * time.Millisecond)
+		mu.Lock()
+		running--
+		mu.Unlock()
+		return inner(req)
+	}}
+	code, stdout, stderr := lupaRun(dir, "", ag, "review", "feature", "--yes", "--json", "--budget", "200", "--parallel", "1")
+	if code != 0 {
+		t.Fatalf("exit %d, stdout %q, stderr %q", code, stdout, stderr)
+	}
+	if len(reqs) < 2 {
+		t.Fatalf("%d runs, want at least two groups", len(reqs))
+	}
+	if peak != 1 {
+		t.Errorf("%d runs at once, want 1", peak)
+	}
+}
+
+func TestReviewRunSettingsErrors(t *testing.T) {
+	cases := []struct {
+		name, env, envValue string
+		args                []string
+		stderr              string
+	}{
+		{"budget not a number", "", "", []string{"--budget", "big"}, `--budget wants a positive number of bytes, got "big"`},
+		{"budget zero", "", "", []string{"--budget", "0"}, `--budget wants a positive number of bytes, got "0"`},
+		{"parallel below one", "", "", []string{"--parallel", "-1"}, `--parallel wants a positive number of runs, got "-1"`},
+		{"timeout without unit", "", "", []string{"--timeout", "5"}, `--timeout wants a positive duration such as 90s or 10m, got "5"`},
+		{"env parallel", "LUPA_PARALLEL", "many", nil, `LUPA_PARALLEL wants a positive number of runs, got "many"`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.env != "" {
+				t.Setenv(c.env, c.envValue)
+			}
+			dir, _, _ := newRepo(t)
+			code, stdout, stderr := lupa(dir, append([]string{"review", "feature", "--plan"}, c.args...)...)
+			if code != 2 || stdout != "" || !strings.Contains(stderr, c.stderr) {
+				t.Errorf("exit %d, stdout %q, stderr %q; want exit 2 and %q", code, stdout, stderr, c.stderr)
+			}
+		})
+	}
+}
+
+func TestReviewPlanTextKeepsTheRunSettings(t *testing.T) {
+	dir, _, _ := newReviewRepo(t)
+	code, stdout, stderr := lupa(dir, "review", "feature", "--plan", "--budget", "30000", "--parallel", "2", "--timeout", "5m")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if want := "Then run the agent review: lupa review feature --yes --budget 30000 --parallel 2 --timeout 5m"; !strings.Contains(stdout, want) {
+		t.Errorf("plan lacks %q:\n%s", want, stdout)
 	}
 }
