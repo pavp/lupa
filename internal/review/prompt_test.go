@@ -241,3 +241,32 @@ func TestBuildPromptGivesEveryFileItsShareOfTheHints(t *testing.T) {
 		t.Errorf("symbols = %d bytes, want the second file's entry within about %d:\n%s", len(symbols), symbolLimit, symbols[max(0, len(symbols)-300):])
 	}
 }
+
+func TestBuildContractPromptShowsTheConsumers(t *testing.T) {
+	in := promptInput()
+	in.Consumers = map[string][]reach.Snippet{"src/a.ts": {{File: "src/cancel.ts", Line: 4, End: 5, Why: "reads credentialId (line 5)", Code: "export function cancel(reference) {\n  const { credentialId } = reference;"}}}
+	p, ok := BuildContractPrompt(in)
+	body, has := dataBlock(p.User, "consumers")
+	want := "src/cancel.ts:4-5 (reads credentialId (line 5))\n     4  export function cancel(reference) {\n     5    const { credentialId } = reference;\n"
+	if !ok || !has || body != want {
+		t.Errorf("consumers block = %q, want %q", body, want)
+	}
+	if !strings.HasPrefix(p.User, "# Task\n\nCheck only whether this change breaks code it does not touch.") || p.System != systemPrompt {
+		t.Error("contract prompt does not lead with the contract task")
+	}
+	var many []reach.Snippet
+	for i := range 500 {
+		many = append(many, reach.Snippet{File: "src/x.ts", Line: i + 1, End: i + 1, Why: "reads field", Code: strings.Repeat("x", 60)})
+	}
+	in.Consumers = map[string][]reach.Snippet{"src/a.ts": many}
+	if p, _ := BuildContractPrompt(in); len(p.User) > 40000 {
+		t.Errorf("contract prompt is %d bytes with 500 consumers, want the block cut at about %d", len(p.User), consumerLimit)
+	}
+	in.Consumers = nil
+	if _, ok := BuildContractPrompt(in); ok {
+		t.Error("contract prompt built for a group with no consumers")
+	}
+	if _, ok := dataBlock(BuildPrompt(in).User, "consumers"); ok {
+		t.Error("general prompt has a consumers block")
+	}
+}

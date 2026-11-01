@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"slices"
@@ -603,5 +604,117 @@ func TestRunChecksTheDescriptionAlongsideTheGroups(t *testing.T) {
 	}
 	if out := Run(context.Background(), f.input(runPlan(Options{}))); out.Claims != nil || f.count(claimsSystem) != 1 {
 		t.Errorf("claims = %+v without sentences, want no claim run", out.Claims)
+	}
+}
+
+func TestRunAddsAContractPassForGroupsWithConsumers(t *testing.T) {
+	plan := runPlan(Options{})
+	var general []string
+	var mu sync.Mutex
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if strings.Contains(prompt, "Check only whether this change breaks code it does not touch") {
+				if !group(prompt, "lib/tax.ts") || !strings.Contains(prompt, "src/invoice.ts:4-6 (reads rate (line 5))") {
+					return "", fmt.Errorf("contract pass for the wrong group or without its consumers: %s", prompt)
+				}
+				return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "severe", "invoice reads a rate no longer written", taxQuote, false)), nil
+			}
+			mu.Lock()
+			general = append(general, prompt)
+			mu.Unlock()
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}), nil
+			}
+			return answer([]string{"src/cart.ts"}), nil
+		},
+	}
+	in := f.input(plan)
+	in.Investigate = false
+	in.Consumers = map[string][]reach.Snippet{"lib/tax.ts": {{File: "src/invoice.ts", Line: 4, End: 6, Why: "reads rate (line 5)", Code: "a\nconst r = t.rate;\nb"}}}
+	out := Run(context.Background(), in)
+
+	if len(out.Findings) != 1 || out.Findings[0].Finding.Comment.Claim != "invoice reads a rate no longer written" {
+		t.Fatalf("findings = %+v, want the contract pass's break", out.Findings)
+	}
+	if out.Usage.Calls != 4 || out.Usage.Stages[UsageContract].Calls != 1 || f.count(investigateSystem) != 1 {
+		t.Errorf("calls = %d, contract calls = %d, investigator calls = %d; want 2 reviewers, 1 contract pass for the group with consumers and 1 investigator for its finding",
+			out.Usage.Calls, out.Usage.Stages[UsageContract].Calls, f.count(investigateSystem))
+	}
+	if out.Findings[0].Source != SourceContract || out.Findings[0].Finding.Level == verify.LevelNote {
+		t.Errorf("finding source %q level %q, want the contract pass's confirmed break in the main list", out.Findings[0].Source, out.Findings[0].Finding.Level)
+	}
+	for _, p := range general {
+		if strings.Contains(p, "LUPA-DATA consumers") {
+			t.Errorf("the general reviewer got the consumers block; only the contract pass should")
+		}
+	}
+}
+
+func TestRunKeepsAnUnconfirmedContractBreakOutOfTheMainList(t *testing.T) {
+	plan := runPlan(Options{})
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if strings.Contains(prompt, "Check only whether this change breaks code it does not touch") {
+				return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "severe", "invoice reads a rate no longer written", taxQuote, true)), nil
+			}
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}), nil
+			}
+			return answer([]string{"src/cart.ts"}), nil
+		},
+		investigate: func(string) string {
+			return `{"verdict": "refuted", "reasoning": "invoice reads the rate from its own row", "evidence": []}`
+		},
+	}
+	in := f.input(plan)
+	in.Investigate = false
+	in.Consumers = map[string][]reach.Snippet{"lib/tax.ts": {{File: "src/invoice.ts", Line: 4, End: 6, Why: "reads rate (line 5)", Code: "a\nconst r = t.rate;\nb"}}}
+	out := Run(context.Background(), in)
+
+	if len(out.Findings) != 1 || out.Findings[0].Finding.Level != verify.LevelNote || out.Findings[0].Held == "" {
+		t.Errorf("findings = %+v, want the refuted contract break kept as a note with the investigator's reason", out.Findings)
+	}
+}
+
+func TestRunFoldsAContractBreakIntoTheReviewerFindingOnTheSameLines(t *testing.T) {
+	cases := []struct {
+		name, reviewerSeverity string
+		wantSource             string
+	}{
+		{"same level keeps the reviewer's", "severe", ""},
+		{"higher contract level keeps the contract's, still investigated", "warning", SourceContract},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeRun{review: func(prompt string) (string, error) {
+				if strings.Contains(prompt, "Check only whether this change breaks code it does not touch") {
+					b := comment("lib/tax.ts", "severe", "invoice reads a rate no longer written", taxQuote, false)
+					b["harm"], b["mechanism"] = "failure", "invoice.ts reads t.rate and gets undefined"
+					return answer([]string{"lib/tax.ts"}, b), nil
+				}
+				if group(prompt, "lib/tax.ts") {
+					a := comment("lib/tax.ts", c.reviewerSeverity, "rate is no longer the stored value", taxQuote, false)
+					a["harm"], a["mechanism"] = "wrong_data", "tax multiplies by the imported rate"
+					return answer([]string{"lib/tax.ts"}, a), nil
+				}
+				return answer([]string{"src/cart.ts"}), nil
+			}}
+			in := f.input(runPlan(Options{}))
+			in.Investigate = false
+			in.Consumers = map[string][]reach.Snippet{"lib/tax.ts": {{File: "src/invoice.ts", Line: 4, End: 6, Why: "reads rate (line 5)", Code: "a\nconst r = t.rate;\nb"}}}
+			out := Run(context.Background(), in)
+
+			if len(out.Findings) != 1 {
+				t.Fatalf("findings = %d (%v), want the two folded into one", len(out.Findings), claims(out.Findings))
+			}
+			got := out.Findings[0]
+			if got.Source != c.wantSource || got.Finding.Level != verify.LevelImportant {
+				t.Errorf("source %q level %q, want source %q at important", got.Source, got.Finding.Level, c.wantSource)
+			}
+			m := got.Finding.Comment.Mechanism
+			if !strings.Contains(m, "tax multiplies by the imported rate") || !strings.Contains(m, "invoice.ts reads t.rate and gets undefined") {
+				t.Errorf("mechanism = %q, want both the cause and its consumer's consequence", m)
+			}
+		})
 	}
 }
