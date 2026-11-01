@@ -159,6 +159,9 @@ type patchScan struct {
 	hasHunks bool
 }
 
+// HunkLines returns the head line numbers a unified diff's hunks show, added and context lines alike.
+func HunkLines(patch string) map[int]bool { return scanPatch(patch).inHunk }
+
 func scanPatch(patch string) patchScan {
 	s := patchScan{added: map[int]string{}, inHunk: map[int]bool{}, hunkOf: map[int]int{}}
 	var newN, oldLeft, newLeft int
