@@ -37,7 +37,7 @@ import (
 	"github.com/pavp/lupa/internal/verify"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--plan] [--yes] [--json]\n       lupa skill install\n       lupa doctor\n       lupa --version | --help\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--budget <bytes>] [--parallel <n>] [--timeout <duration>] [--plan] [--yes] [--json]\n       lupa skill install\n       lupa doctor\n       lupa --version | --help\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.
@@ -645,13 +645,15 @@ func evidenceJSON(es []review.Evidence) []review.Evidence {
 // reviewFlags are the flags that choose how a review runs.
 type reviewFlags struct {
 	agent, model, extensions, effort string
+	budget, parallel, timeout        string
 	orchestrate, investigate         bool
 }
 
 // agentFlagsOf repeats the flags a review was given, quoted for a shell, so a suggested command runs the same review.
 func agentFlagsOf(r reviewFlags) string {
 	var b strings.Builder
-	for _, f := range [][2]string{{"--agent", r.agent}, {"--model", r.model}, {"--pi-extensions", r.extensions}, {"--effort", r.effort}} {
+	for _, f := range [][2]string{{"--agent", r.agent}, {"--model", r.model}, {"--pi-extensions", r.extensions}, {"--effort", r.effort},
+		{"--budget", r.budget}, {"--parallel", r.parallel}, {"--timeout", r.timeout}} {
 		if f[1] == "" || (f[0] == "--agent" && f[1] == "claude") {
 			continue
 		}
@@ -668,6 +670,42 @@ func agentFlagsOf(r reviewFlags) string {
 		b.WriteString(" --investigate")
 	}
 	return b.String()
+}
+
+// runSettings resolves the plan budget, the reviewer runs at once and the run timeout, each from its flag, else its
+// LUPA_* variable, else the default (zero).
+func runSettings(fl reviewFlags) (budget, parallel int, timeout time.Duration, err error) {
+	positive := func(flag, env, value, unit string) (int, error) {
+		v, from := settingOf(flag, env, value)
+		if v == "" {
+			return 0, nil
+		}
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return 0, usageError{fmt.Sprintf("%s wants a positive number of %s, got %q", from, unit, v)}
+		}
+		return n, nil
+	}
+	if budget, err = positive("--budget", "LUPA_BUDGET", fl.budget, "bytes"); err != nil {
+		return 0, 0, 0, err
+	}
+	if parallel, err = positive("--parallel", "LUPA_PARALLEL", fl.parallel, "runs"); err != nil {
+		return 0, 0, 0, err
+	}
+	if v, from := settingOf("--timeout", "LUPA_TIMEOUT", fl.timeout); v != "" {
+		if timeout, err = time.ParseDuration(v); err != nil || timeout <= 0 {
+			return 0, 0, 0, usageError{fmt.Sprintf("%s wants a positive duration such as 90s or 10m, got %q", from, v)}
+		}
+	}
+	return budget, parallel, timeout, nil
+}
+
+// settingOf returns the flag's value when given, else the environment variable's, and the name it came from.
+func settingOf(flag, env, value string) (v, from string) {
+	if value != "" {
+		return value, flag
+	}
+	return os.Getenv(env), env
 }
 
 // agentOf builds the named agent's adapter; extensions is a comma-separated list of Pi extension paths.
@@ -691,7 +729,12 @@ func runReview(args []string, env Env) error {
 	asJSON, planOnly, yes := false, false, false
 	fl := reviewFlags{agent: "claude"}
 	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes, "--orchestrate": &fl.orchestrate, "--investigate": &fl.investigate},
-		map[string]*string{"--agent": &fl.agent, "--model": &fl.model, "--pi-extensions": &fl.extensions, "--effort": &fl.effort})
+		map[string]*string{"--agent": &fl.agent, "--model": &fl.model, "--pi-extensions": &fl.extensions, "--effort": &fl.effort,
+			"--budget": &fl.budget, "--parallel": &fl.parallel, "--timeout": &fl.timeout})
+	if err != nil {
+		return err
+	}
+	budget, parallel, timeout, err := runSettings(fl)
 	if err != nil {
 		return err
 	}
@@ -717,7 +760,7 @@ func runReview(args []string, env Env) error {
 	repo, signals, key, patches := m.repo, m.signals, m.key, m.patches
 	conventions := conventionsOf(repo, signals.Base)
 	empty := review.BuildPrompt(review.PromptInput{Conventions: conventions})
-	plan := review.Plan(signals.Files, patches, review.Options{Overhead: len(empty.System) + len(empty.User)})
+	plan := review.Plan(signals.Files, patches, review.Options{Budget: budget, Overhead: len(empty.System) + len(empty.User)})
 	// One session reviews and validates every group with Claude Code subagents; otherwise one run per group, plus
 	// the investigators when asked for.
 	orchestrate := fl.orchestrate
@@ -773,7 +816,7 @@ func runReview(args []string, env Env) error {
 	}
 	symbols := m.symbols
 	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate,
-		Sentences: sentences, ClaimPatches: claimPatches})
+		Sentences: sentences, ClaimPatches: claimPatches, Parallel: parallel, Timeout: timeout})
 	if err != nil {
 		return err
 	}
