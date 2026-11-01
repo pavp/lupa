@@ -21,17 +21,21 @@ const hintLimit = 4000
 // symbolLimit is the most bytes of changed-symbol callers and callees a prompt carries, shared among the group's files.
 const symbolLimit = 6000
 
+// consumerLimit is the most bytes of consumer code a prompt carries, shared among the group's files.
+const consumerLimit = 16000
+
 // Convention is a repo instruction file (AGENTS.md, CLAUDE.md) read from the base branch.
 type Convention struct{ Path, Content string }
 
 // PromptInput is what one reviewer run is told about its group. Importers maps a group path to
 // the files that import it from outside the change, Symbols to the declarations the change touches
-// in it; Patch is already within the byte budget.
+// in it, Consumers to unchanged code that reads what its change writes; Patch is already within the byte budget.
 type PromptInput struct {
 	Patch       string
 	Paths       []string
 	Importers   map[string][]string
 	Symbols     map[string][]reach.Symbol
+	Consumers   map[string][]reach.Snippet
 	Conventions []Convention
 }
 
@@ -57,6 +61,33 @@ Set harm to what a user or caller would see if it happens: wrong_data (wrong or 
 An empty ` + "`comments`" + ` list is right only when the change has no logic that could break.
 `
 
+const contractTask = `# Task
+
+Check only whether this change breaks code it does not touch. The consumers block lists unchanged code that reads what the change writes, compares the constants it uses, or surrounds the lines it edits in the same declaration. For each consumer, decide whether it still works with the change: a value it reads that is no longer written, or written differently; a format or marker it parses that changed; a branch it now takes or skips; a check it relies on that the new code bypasses. Read more of a consumer with your tools when the snippet is not enough.
+
+Report only breaks you can trace from a changed line to a consumer; report nothing else. The quote is the changed line that causes the break, and the mechanism names the consumer (file:line) and how it breaks. Severity: severe when realistic input reaches the break with an observable harm; otherwise a warning.
+
+Output: reply with ONE JSON object and nothing else:
+{"files_inspected": [<every path of this group>], "comments": [{"file": "<path>", "severity": "severe"|"warning", "claim": "<what is wrong>", "mechanism": "<how it breaks: input, path, condition>", "fix": "<one concrete change>", "quote": "<the exact code lines the claim is about, copied verbatim from the change including indentation; several consecutive lines allowed>", "quote_settles": true|false, "harm": "wrong_data"|"failure"|"security"|"broken_caller"|"slow"|"none"}]}
+Set quote_settles to true only when the quoted lines alone prove the claim.
+An empty ` + "`comments`" + ` list is right when no consumer breaks.
+`
+
+// BuildContractPrompt renders the contract reviewer's prompt for one group: the same data blocks, its consumers
+// included, under a task that checks only breaks in code the change does not touch. ok is false when the group has
+// no consumers, so there is nothing to check.
+func BuildContractPrompt(in PromptInput) (p Prompt, ok bool) {
+	if len(consumerHints(in.Paths, in.Consumers)) == 0 {
+		return Prompt{}, false
+	}
+	paths, _ := json.Marshal(in.Paths)
+	var b strings.Builder
+	b.WriteString(contractTask)
+	fmt.Fprintf(&b, "The paths of this group, for files_inspected: %s\n", paths)
+	b.WriteString(groupData(in))
+	return Prompt{System: systemPrompt, User: b.String()}, true
+}
+
 // BuildPrompt renders the reviewer prompt for one group. It is deterministic: the same input
 // always yields the same prompt.
 func BuildPrompt(in PromptInput) Prompt {
@@ -79,6 +110,9 @@ func groupData(in PromptInput) string {
 	}
 	if calls := shared(symbolHints(in.Paths, in.Symbols), symbolLimit); calls != "" {
 		data = append(data, block{"symbols", calls})
+	}
+	if code := shared(consumerHints(in.Paths, in.Consumers), consumerLimit); code != "" {
+		data = append(data, block{"consumers", code})
 	}
 	data = append(data, block{"change", in.Patch})
 	var b strings.Builder
@@ -108,6 +142,8 @@ func (d block) title() string {
 		return "# Hints: files outside the change that import these files directly (a starting point, not exhaustive)"
 	case "symbols":
 		return "# Changed symbols: callers and callees matched by name (misses namespace imports, require and renamed re-exports; not exhaustive)"
+	case "consumers":
+		return "# Consumers: unchanged code that reads what this change writes or uses the same constants, matched by name (a starting point, not exhaustive)"
 	case "comment":
 		return "# Comment whose quote was not found"
 	case "patch":
@@ -140,6 +176,25 @@ func shared(entries []string, limit int) string {
 		b.WriteString(truncate(e, share[i]))
 	}
 	return b.String()
+}
+
+// consumerHints lists, in group order, the unchanged code consuming each path's change, one entry per path,
+// each snippet with its head line numbers.
+func consumerHints(paths []string, consumers map[string][]reach.Snippet) []string {
+	var out []string
+	for _, p := range paths {
+		var b strings.Builder
+		for _, s := range consumers[p] {
+			fmt.Fprintf(&b, "%s:%d-%d (%s)\n", s.File, s.Line, s.End, s.Why)
+			for i, line := range strings.Split(s.Code, "\n") {
+				fmt.Fprintf(&b, "%6d  %s\n", s.Line+i, line)
+			}
+		}
+		if b.Len() > 0 {
+			out = append(out, b.String())
+		}
+	}
+	return out
 }
 
 // importerHints lists, in group order, the importers of each path that has any, one entry per path.

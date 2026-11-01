@@ -18,10 +18,12 @@ import (
 // importers and changed symbols by path, the base-branch conventions, the agent and its run settings, and a reader of
 // any repo file at the head of the change.
 type RunInput struct {
-	Plan        Result
-	Patches     map[string]string
-	Importers   map[string][]string
-	Symbols     map[string][]reach.Symbol
+	Plan      Result
+	Patches   map[string]string
+	Importers map[string][]string
+	Symbols   map[string][]reach.Symbol
+	// Consumers is unchanged code that reads what each changed file's change writes, by changed file.
+	Consumers   map[string][]reach.Snippet
 	Conventions []Convention
 	Agent       agent.Agent
 	Dir         string
@@ -70,6 +72,11 @@ const (
 	UsageAnchor      = "anchor"
 	UsageInvestigate = "investigate"
 	UsageOrchestrate = "orchestrate"
+	UsageContract    = "contract"
+
+	// SourceContract marks a finding the contract pass proposed; it reaches the main list only when an
+	// investigator confirms it, since that pass reasons about code the change does not show.
+	SourceContract = "contract"
 )
 
 // Tally sums the usage of agent calls, including failed ones.
@@ -177,7 +184,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 	}
 	candidates := slices.DeleteFunc(slices.Clone(merged), followUp)
 	var inv InvestigateResult
-	promoted, held := map[verify.Finding][]Evidence{}, map[verify.Finding]string{}
+	promoted, held, demoted := map[verify.Finding][]Evidence{}, map[verify.Finding]string{}, map[verify.Finding]bool{}
 	switch {
 	case in.Orchestrate:
 		inv = validate(candidates, in.Head)
@@ -187,7 +194,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 		var doubtful []Anchored
 		for _, c := range candidates {
 			inv.Confirmed = append(inv.Confirmed, Investigated{Finding: c})
-			if c.Finding.Level == verify.LevelNote && verify.Observable(c.Finding.Comment.Harm) {
+			if c.Finding.Level == verify.LevelNote && verify.Observable(c.Finding.Comment.Harm) || c.Source == SourceContract && c.Finding.Level != verify.LevelNote {
 				doubtful = append(doubtful, c)
 			}
 		}
@@ -195,10 +202,15 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			checked := Investigate(ctx, InvestigateInput{Agent: ag.at(UsageInvestigate), Dir: in.Dir, Timeout: in.Timeout, Findings: doubtful,
 				Patches: in.Patches, Head: in.Head, Parallel: in.Parallel})
 			for _, c := range checked.Confirmed {
-				promoted[c.Finding.Finding] = c.Evidence
+				if c.Finding.Finding.Level == verify.LevelNote {
+					promoted[c.Finding.Finding] = c.Evidence
+				}
 			}
 			for _, c := range slices.Concat(checked.Refuted, checked.Unconfirmed) {
 				held[c.Finding.Finding] = c.Reason
+				if c.Finding.Source == SourceContract && c.Finding.Finding.Level != verify.LevelNote {
+					demoted[c.Finding.Finding] = true
+				}
 			}
 		}
 	default:
@@ -223,6 +235,10 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 				f.Finding.Level, f.Evidence = verify.LevelImportant, ev
 			}
 			f.Held = held[f.Finding]
+			// The level is part of the key the maps above use, so it changes last.
+			if demoted[f.Finding] {
+				f.Finding.Level = verify.LevelNote
+			}
 			out.Findings = append(out.Findings, f)
 			confirmed = confirmed[1:]
 		}
@@ -256,14 +272,34 @@ func reviewOne(ctx context.Context, in RunInput, ag meter, g Group) groupResult 
 		return r
 	}
 	r.uninspected = parsed.Uninspected
+	batches := []struct {
+		source   string
+		comments []verify.Comment
+	}{{"", parsed.Comments}}
+	// A second pass checks only the unchanged code that consumes the change: one general pass, even with that code
+	// in front of it, did not propose those breaks. Its comments go through the same anchor and investigator.
+	if cp, ok := BuildContractPrompt(PromptInput{Patch: patch, Paths: paths, Consumers: in.Consumers, Conventions: in.Conventions}); ok {
+		if contract, why := reviewGroup(ctx, ag.at(UsageContract), agent.Request{Dir: in.Dir, SystemPrompt: cp.System, Prompt: cp.User, Timeout: in.Timeout, Schema: reviewSchema}, paths); why == "" {
+			batches = append(batches, struct {
+				source   string
+				comments []verify.Comment
+			}{SourceContract, contract.Comments})
+			parsed.Dropped = append(parsed.Dropped, contract.Dropped...)
+		}
+	}
 	for _, d := range parsed.Dropped {
 		r.dropped = append(r.dropped, Drop{Stage: StageSchema, Group: g.ID, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
 	}
-	res := Anchor(ctx, AnchorInput{Agent: ag.at(UsageAnchor), Dir: in.Dir, Timeout: in.Timeout, Comments: parsed.Comments, Patches: in.Patches, Head: in.Head})
-	for _, d := range res.Dropped {
-		r.dropped = append(r.dropped, Drop{Stage: StageAnchor, Group: g.ID, Reason: d.Reason, Comment: d.Comment})
+	for _, b := range batches {
+		res := Anchor(ctx, AnchorInput{Agent: ag.at(UsageAnchor), Dir: in.Dir, Timeout: in.Timeout, Comments: b.comments, Patches: in.Patches, Head: in.Head})
+		for _, d := range res.Dropped {
+			r.dropped = append(r.dropped, Drop{Stage: StageAnchor, Group: g.ID, Reason: d.Reason, Comment: d.Comment})
+		}
+		for _, f := range res.Findings {
+			f.Source = b.source
+			r.findings = append(r.findings, f)
+		}
 	}
-	r.findings = res.Findings
 	return r
 }
 
@@ -336,12 +372,49 @@ func dedupe(fs []Anchored) []Anchored {
 		}
 		a := Anchored{Finding: f, Also: also[k]}
 		if i < len(fs) {
-			a.Relocated, a.validation = fs[i].Relocated, fs[i].validation
+			a.Relocated, a.validation, a.Source = fs[i].Relocated, fs[i].validation, fs[i].Source
 		}
 		out = append(out, a)
 		i++
 	}
+	return foldContract(out)
+}
+
+// foldContract merges a contract-pass break into a reviewer finding on overlapping lines of the same file: the
+// same defect seen from its consumer, whose harm and wording differ by nature. The higher level survives, the
+// contract's on a tie loses, so a contract survivor still needs an investigator to stay in the main list.
+func foldContract(fs []Anchored) []Anchored {
+	out := slices.Clone(fs)
+	for i := 0; i < len(out); i++ {
+		c := out[i]
+		if c.Source != SourceContract || followUp(c) {
+			continue
+		}
+		j := slices.IndexFunc(out, func(r Anchored) bool {
+			return r.Source != SourceContract && !followUp(r) && overlaps(r.Finding.Location, c.Finding.Location)
+		})
+		if j < 0 {
+			continue
+		}
+		win, lose, label := out[j], c, "consumer"
+		if verify.LevelRank(c.Finding.Level) > verify.LevelRank(out[j].Finding.Level) {
+			win, lose, label = c, out[j], "cause"
+		}
+		win.Finding.Comment.Mechanism += "; " + label + ": " + lose.Finding.Comment.Mechanism
+		win.Finding.Merged += 1 + lose.Finding.Merged
+		win.Also = append(win.Also, lose.Also...)
+		if lose.Finding.Location != win.Finding.Location {
+			win.Also = append(win.Also, lose.Finding.Location)
+		}
+		out[j] = win
+		out = slices.Delete(out, i, i+1)
+		i--
+	}
 	return out
+}
+
+func overlaps(a, b verify.Location) bool {
+	return a.File == b.File && a.Side == b.Side && a.Start <= b.End && b.Start <= a.End
 }
 
 // meter sums the usage of every call it forwards, in total and under its stage, from any number of goroutines.
