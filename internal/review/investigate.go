@@ -22,6 +22,8 @@ type InvestigateInput struct {
 	Head     func(path string) (string, bool)
 	// Parallel bounds how many investigations run at once; zero means DefaultParallel, below one means one.
 	Parallel int
+	// Model is the model of each investigator run; empty keeps the agent's model.
+	Model string
 }
 
 // The verdicts an investigator can reach.
@@ -118,7 +120,7 @@ func Investigate(ctx context.Context, in InvestigateInput) InvestigateResult {
 
 // investigateOne returns the verdict code accepts, the located evidence, and the reason when unconfirmed.
 func investigateOne(ctx context.Context, in InvestigateInput, a Anchored) (string, []Evidence, string) {
-	resp, err := in.Agent.Run(ctx, agent.Request{Dir: in.Dir, SystemPrompt: investigateSystem, Prompt: investigatePrompt(a, in.Patches),
+	resp, err := in.Agent.Run(ctx, agent.Request{Dir: in.Dir, Model: in.Model, SystemPrompt: investigateSystem, Prompt: investigatePrompt(a, in.Patches),
 		Timeout: in.Timeout, Schema: investigateSchema})
 	if err != nil {
 		return VerdictUnproven, nil, "investigation failed: " + err.Error()

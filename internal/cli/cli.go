@@ -37,7 +37,7 @@ import (
 	"github.com/pavp/lupa/internal/verify"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--budget <bytes>] [--parallel <n>] [--timeout <duration>] [--redact-prompt] [--plan] [--yes] [--json]\n       lupa skill install\n       lupa doctor\n       lupa --version | --help\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--investigator-model <id>] [--pi-extensions <path,...>] [--budget <bytes>] [--parallel <n>] [--timeout <duration>] [--redact-prompt] [--plan] [--yes] [--json]\n       lupa skill install\n       lupa doctor\n       lupa --version | --help\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
 // usageOf returns the usage of the command in args, or the whole usage when there is no known command.
 func usageOf(args []string) string {
@@ -676,9 +676,13 @@ func evidenceJSON(es []review.Evidence) []review.Evidence {
 	return out
 }
 
+// defaultClaudeInvestigator is the model of Claude Code investigator runs when --investigator-model is not given.
+const defaultClaudeInvestigator = "claude-haiku-5-5"
+
 // reviewFlags are the flags that choose how a review runs.
 type reviewFlags struct {
 	agent, model, extensions, effort string
+	investigatorModel                string
 	budget, parallel, timeout        string
 	orchestrate, investigate         bool
 	redactPrompt                     bool
@@ -687,7 +691,7 @@ type reviewFlags struct {
 // agentFlagsOf repeats the flags a review was given, quoted for a shell, so a suggested command runs the same review.
 func agentFlagsOf(r reviewFlags) string {
 	var b strings.Builder
-	for _, f := range [][2]string{{"--agent", r.agent}, {"--model", r.model}, {"--pi-extensions", r.extensions}, {"--effort", r.effort},
+	for _, f := range [][2]string{{"--agent", r.agent}, {"--model", r.model}, {"--pi-extensions", r.extensions}, {"--effort", r.effort}, {"--investigator-model", r.investigatorModel},
 		{"--budget", r.budget}, {"--parallel", r.parallel}, {"--timeout", r.timeout}} {
 		if f[1] == "" || (f[0] == "--agent" && f[1] == "claude") {
 			continue
@@ -768,7 +772,7 @@ func runReview(args []string, env Env) error {
 	fl := reviewFlags{agent: "claude"}
 	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes, "--orchestrate": &fl.orchestrate, "--investigate": &fl.investigate,
 		"--redact-prompt": &fl.redactPrompt},
-		map[string]*string{"--agent": &fl.agent, "--model": &fl.model, "--pi-extensions": &fl.extensions, "--effort": &fl.effort,
+		map[string]*string{"--agent": &fl.agent, "--model": &fl.model, "--pi-extensions": &fl.extensions, "--effort": &fl.effort, "--investigator-model": &fl.investigatorModel,
 			"--budget": &fl.budget, "--parallel": &fl.parallel, "--timeout": &fl.timeout})
 	if err != nil {
 		return err
@@ -788,6 +792,11 @@ func runReview(args []string, env Env) error {
 	}
 	// Pi keeps the investigator it always had; for Claude Code it is opt-in.
 	investigate := fl.investigate || agentName == "pi"
+	investigatorModel := fl.investigatorModel
+	if investigatorModel == "" && agentName == "claude" {
+		// An investigator checks one candidate against code it cites; a small model does that for a fraction of the price.
+		investigatorModel = defaultClaudeInvestigator
+	}
 	adapter, err := agentOf(agentName, fl.model, fl.extensions, fl.effort)
 	if err != nil {
 		return err
@@ -858,7 +867,7 @@ func runReview(args []string, env Env) error {
 	if err != nil {
 		return err
 	}
-	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Consumers: consumers, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate,
+	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Consumers: consumers, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate, InvestigatorModel: investigatorModel,
 		Sentences: sentences, ClaimPatches: claimPatches, Parallel: parallel, Timeout: timeout, Credentials: signals.Credentials,
 		RedactPrompt: fl.redactPrompt})
 	if err != nil {

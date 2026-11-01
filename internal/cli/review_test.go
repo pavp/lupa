@@ -882,3 +882,39 @@ func TestReviewRunSendsThePatchUnredactedByDefault(t *testing.T) {
 		t.Error("without --redact-prompt the reviewer no longer sees the patch as it is")
 	}
 }
+
+func TestReviewInvestigatorModel(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{"claude default", nil, "claude-haiku-5-5"},
+		{"flag", []string{"--investigator-model", "claude-sonnet-5-5"}, "claude-sonnet-5-5"},
+		{"pi keeps its model", []string{"--agent", "pi"}, ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			dir, _, _ := newRunRepo(t)
+			var reqs []agent.Request
+			code, _, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), append([]string{"review", "feature", "--yes", "--json"}, c.args...)...)
+			if code != 0 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			investigated := false
+			for _, r := range reqs {
+				want := ""
+				if strings.Contains(r.Prompt, "Investigate the candidate defect") {
+					want, investigated = c.want, true
+				}
+				if r.Model != want {
+					t.Errorf("run model = %q, want %q (investigator: %v)", r.Model, want, want != "" || strings.Contains(r.Prompt, "Investigate the candidate defect"))
+				}
+			}
+			if !investigated {
+				t.Fatal("no investigator run")
+			}
+		})
+	}
+}
