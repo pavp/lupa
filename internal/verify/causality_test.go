@@ -124,3 +124,59 @@ func TestLevel(t *testing.T) {
 		}
 	}
 }
+
+var movedPatches = map[string]string{
+	"src/old.go": lines(
+		"diff --git a/src/old.go b/src/old.go",
+		"--- a/src/old.go",
+		"+++ b/src/old.go",
+		"@@ -1,6 +1,1 @@",
+		" package src",
+		"-func Total(items []Item) int {",
+		"-	sum := 0",
+		"-	for _, it := range items { sum += it.Price * it.Qty }",
+		"-	return sum",
+		"-}",
+	),
+	"src/new.go": lines(
+		"diff --git a/src/new.go b/src/new.go",
+		"--- /dev/null",
+		"+++ b/src/new.go",
+		"@@ -0,0 +1,7 @@",
+		"+package src",
+		"+",
+		"+func Total(items []Item) int {",
+		"+		sum := 0",
+		"+		for _, it := range items { sum += it.Price * it.Qty }",
+		"+		return sum + shippingFee(items)",
+		"+}",
+	),
+}
+
+func TestCausalityOfMovedCode(t *testing.T) {
+	tests := []struct {
+		name string
+		loc  Location
+		want string
+	}{
+		{"lines moved from another file, reindented", Location{File: "src/new.go", Side: "new", Start: 3, End: 5}, CausalityMoved},
+		{"a moved line next to a changed one", Location{File: "src/new.go", Side: "new", Start: 5, End: 6}, CausalityIntroduced},
+		{"a changed line on its own", Location{File: "src/new.go", Side: "new", Start: 6, End: 6}, CausalityIntroduced},
+		{"a lone brace that also appears removed", Location{File: "src/new.go", Side: "new", Start: 7, End: 7}, CausalityIntroduced},
+		{"a moved line and a short one", Location{File: "src/new.go", Side: "new", Start: 3, End: 4}, CausalityMoved},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := Causality(tt.loc, movedPatches); got != tt.want {
+				t.Errorf("Causality(%+v) = %q, want %q", tt.loc, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestLevelOfMovedCodeIsFollowUp(t *testing.T) {
+	c := Comment{Severity: "severe", QuoteSettles: true}
+	if got := Level(c, CausalityMoved); got != LevelFollowUp {
+		t.Errorf("Level(severe, moved) = %q, want %q", got, LevelFollowUp)
+	}
+}
