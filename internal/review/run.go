@@ -31,6 +31,9 @@ type RunInput struct {
 	Parallel int
 	// Credentials are the map's added lines that hold a credential; each becomes a finding without the model.
 	Credentials []mapping.CredentialSite
+	// RedactPrompt replaces credentials in everything sent to the agent; quotes of redacted lines are then
+	// not found in the change and dropped.
+	RedactPrompt bool
 	// Sentences of the PR description to check against ClaimPatches, the patches of the files a claim may cite.
 	Sentences    []string
 	ClaimPatches map[string]string
@@ -115,6 +118,9 @@ const reasonUninspected = "the reviewer did not report inspecting it"
 // group marks its files not reviewed and the other groups still run.
 func Run(ctx context.Context, in RunInput) RunOutput {
 	out := RunOutput{Ledger: slices.Clone(in.Plan.Ledger)}
+	if in.RedactPrompt {
+		in.Agent = redacting{in.Agent}
+	}
 	ag := meter{Agent: in.Agent, usage: &out.Usage, mu: &sync.Mutex{}}
 	results := make([]groupResult, len(in.Plan.Groups))
 	limit := make(chan struct{}, max(1, cmp.Or(in.Parallel, DefaultParallel)))

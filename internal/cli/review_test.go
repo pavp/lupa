@@ -802,3 +802,83 @@ func TestReviewRunReportsCredentialsWithoutTheModel(t *testing.T) {
 		t.Errorf("findings = %v, want %v", got, want)
 	}
 }
+
+// newSecretRepo is a repo whose feature branch adds a GitHub token to b.go.
+func newSecretRepo(t *testing.T, token string) string {
+	t.Helper()
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	write(t, dir, "a.txt", "one\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	write(t, dir, "b.go", "package b\n\nvar B = 1\n\nconst token = \""+token+"\"\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "change")
+	gitCmd(t, dir, "switch", "-q", "main")
+	return dir
+}
+
+func TestReviewRunRedactPromptKeepsCredentialsFromTheModel(t *testing.T) {
+	token := "ghp_" + strings.Repeat("A1", 18)
+	for _, mode := range [][]string{nil, {"--orchestrate"}} {
+		t.Run(fmt.Sprint(mode), func(t *testing.T) {
+			t.Setenv("TMPDIR", t.TempDir())
+			dir := newSecretRepo(t, token)
+			var seen []string
+			ag := &agent.Fake{Reply: func(req agent.Request) (string, error) {
+				seen = append(seen, req.SystemPrompt, req.Prompt)
+				_ = filepath.WalkDir(req.Dir, func(p string, d os.DirEntry, err error) error {
+					if err == nil && !d.IsDir() && d.Name() != ".git" {
+						if b, err := os.ReadFile(p); err == nil {
+							seen = append(seen, string(b))
+						}
+					}
+					return nil
+				})
+				if req.Subagents {
+					return `{"groups": []}`, nil
+				}
+				m := groupPaths.FindStringSubmatch(req.Prompt)
+				if m == nil {
+					return `{"verdict": "unconfirmed", "reasoning": "n/a", "evidence": []}`, nil
+				}
+				return `{"files_inspected": ` + m[1] + `, "comments": [{"file": "b.go", "severity": "warning", "harm": "none", "claim": "token is hardcoded", "mechanism": "m", "fix": "f", "quote": "const token = \"‹redacted›\"", "quote_settles": false}]}`, nil
+			}}
+			code, stdout, stderr := lupaRun(dir, "", ag, append([]string{"review", "feature", "--yes", "--json", "--redact-prompt"}, mode...)...)
+			if code > 1 {
+				t.Fatalf("exit %d, stderr %q", code, stderr)
+			}
+			if len(seen) == 0 {
+				t.Fatal("the agent never ran")
+			}
+			for _, s := range seen {
+				if strings.Contains(s, token) {
+					t.Fatalf("the model was given the token:\n%s", s)
+				}
+			}
+			var r reviewOut
+			if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+				t.Fatalf("not JSON: %v\n%s", err, stdout)
+			}
+			for _, f := range r.Findings {
+				if f.Claim == "token is hardcoded" {
+					t.Errorf("a quote of a redacted line was kept: %+v", f)
+				}
+			}
+		})
+	}
+}
+
+func TestReviewRunSendsThePatchUnredactedByDefault(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	token := "ghp_" + strings.Repeat("A1", 18)
+	dir := newSecretRepo(t, token)
+	var reqs []agent.Request
+	if code, _, stderr := lupaRun(dir, "", fakeAgent(t, &reqs), "review", "feature", "--yes", "--json"); code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if !slices.ContainsFunc(reqs, func(r agent.Request) bool { return strings.Contains(r.Prompt, token) }) {
+		t.Error("without --redact-prompt the reviewer no longer sees the patch as it is")
+	}
+}
