@@ -54,3 +54,16 @@ func TestGateHandsBackALiveCredential(t *testing.T) {
 		t.Errorf("review_now = %+v, want review: a password assignment alone is only a possible secret", g)
 	}
 }
+
+func TestCredentialSitesTellCodeFromConfig(t *testing.T) {
+	files := []File{{Path: "src/oauth.ts", Additions: 1}, {Path: ".env.example", Additions: 1}}
+	patches := map[string]string{
+		"src/oauth.ts": "diff --git a/src/oauth.ts b/src/oauth.ts\n@@ -0,0 +1 @@\n+  refresh_token: refreshToken,\n",
+		".env.example": "diff --git a/.env.example b/.env.example\n@@ -0,0 +1 @@\n+PASSWORD=hunter2hunter2\n",
+	}
+	s := Build(Input{Base: "b", Head: "h", Files: files, Patches: patches})
+	want := []CredentialSite{{File: ".env.example", Line: 1, Kind: "assigned-secret", Confidence: credentials.Low}}
+	if !reflect.DeepEqual(s.Credentials, want) {
+		t.Errorf("credentials = %+v, want only the unquoted value in the env file, not the variable in code", s.Credentials)
+	}
+}

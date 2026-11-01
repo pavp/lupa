@@ -39,7 +39,7 @@ var patterns = []pattern{
 	{"stripe-test-key", regexp.MustCompile(`\b[rs]k_test_[A-Za-z0-9]{16,}`), none, false},
 	{"slack-token", regexp.MustCompile(`\bxox[abposr]-[A-Za-z0-9-]{10,}`), High, false},
 	{"bearer-token", regexp.MustCompile(`(?i)(\bbearer\s+)[A-Za-z0-9._~+/=-]{16,}`), Low, true},
-	{"assigned-secret", regexp.MustCompile(`(?i)((?:api[_-]?key|secret|token|password|passwd|authorization)\s*[:=]\s*['"]?)[^\s'"]{8,}`), Low, true},
+	{"assigned-secret", regexp.MustCompile(`(?i)((?:api[_-]?key|secret|token|password|passwd|authorization)\s*[:=]\s*['"` + "`" + `]?)[^\s'"]{8,}`), Low, true},
 }
 
 // examples are published sample credentials, matched as exact literals only: a heuristic such as
@@ -56,7 +56,13 @@ type Match struct {
 
 // Find returns the credentials in s that are worth reporting, in pattern order. A value an earlier
 // pattern already matched is not reported again, and a published example key is Low.
-func Find(s string) []Match {
+func Find(s string) []Match { return find(s, false) }
+
+// FindInCode is Find for a line of source code, where a credential-like name set to an unquoted value
+// assigns a variable, not a secret: only a quoted literal or a provider's structure is reported.
+func FindInCode(s string) []Match { return find(s, true) }
+
+func find(s string, code bool) []Match {
 	var out []Match
 	var taken [][2]int
 	for _, p := range patterns {
@@ -69,7 +75,7 @@ func Find(s string) []Match {
 				continue
 			}
 			taken = append(taken, [2]int{start, m[1]})
-			if p.confidence == none || p.keep && reference(s, m) {
+			if p.confidence == none || p.keep && reference(s, m) || p.kind == "assigned-secret" && (placeholder(s, m) || code && !quoted(s, m)) {
 				continue
 			}
 			c := p.confidence
@@ -89,11 +95,31 @@ var referenceValue = regexp.MustCompile(`^[A-Za-z_$][\w$]*(?:\.[\w$]|\()`)
 // reference reports a name-based match whose value is an unquoted reference, which Find does not report;
 // Redact still replaces it, since redaction stays cheap to get wrong.
 func reference(s string, m []int) bool {
+	return !quoted(s, m) && referenceValue.MatchString(s[m[3]:m[1]])
+}
+
+// quoted reports a name-based match whose value opens with a quote.
+func quoted(s string, m []int) bool {
 	prefix := s[m[2]:m[3]]
-	if strings.HasSuffix(prefix, `"`) || strings.HasSuffix(prefix, "'") {
-		return false
+	return strings.HasSuffix(prefix, `"`) || strings.HasSuffix(prefix, "'") || strings.HasSuffix(prefix, "`")
+}
+
+// interpolation is a value that is one ${NAME} and nothing else but closing punctuation.
+var interpolation = regexp.MustCompile("^\\$\\{[^}]+\\}[`,;)]*$")
+
+// placeholder reports an assigned value that holds no secret: an interpolation such as ${DB_PASSWORD},
+// or the key's own name, such as refresh_token = "refresh_token".
+func placeholder(s string, m []int) bool {
+	value := s[m[3]:m[1]]
+	if interpolation.MatchString(value) {
+		return true
 	}
-	return referenceValue.MatchString(s[m[3]:m[1]])
+	start := m[2]
+	for start > 0 && (s[start-1] == '_' || continues(s, start-1)) {
+		start--
+	}
+	key := s[start:m[2]] + strings.TrimRight(s[m[2]:m[3]], " \t:='\"`")
+	return strings.EqualFold(value, key)
 }
 
 // continues reports a letter or digit at i, where a match ended inside a longer value.
