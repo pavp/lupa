@@ -6,12 +6,14 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pavp/lupa/internal/agent"
+	"github.com/pavp/lupa/internal/verify"
 )
 
 // orchestrateInput is a run of the plan over the run fixtures in a temporary worktree.
@@ -231,5 +233,30 @@ func TestOrchestrateNeverWritesThroughALinkTheChangeCommits(t *testing.T) {
 
 	if left, _ := os.ReadDir(victim); len(left) != 0 {
 		t.Errorf("wrote %d entries through a committed link into %s", len(left), victim)
+	}
+}
+
+func TestRunOrchestratedPromotesConfirmedWarningsWithAnObservableHarm(t *testing.T) {
+	confirmedAt := func(c map[string]any, harm string, ev Evidence) map[string]any {
+		c["harm"] = harm
+		c["validation"] = map[string]any{"verdict": VerdictConfirmed, "reasoning": "traced", "blocks": "", "evidence": []Evidence{ev}}
+		return c
+	}
+	groups := map[int][]map[string]any{
+		1: {confirmedAt(comment("lib/tax.ts", "warning", "rate may be undefined", taxQuote, false), "wrong_data", Evidence{File: "lib/tax.ts", Line: 5, Quote: taxQuote})},
+		2: {confirmedAt(comment("src/cart.ts", "warning", "qty is named poorly", cartQuote, false), "none", Evidence{File: "src/cart.ts", Line: 11, Quote: cartQuote})},
+	}
+	in := (&fakeRun{}).input(runPlan(Options{Budget: twoGroups}))
+	in.Agent, in.Dir, in.Orchestrate = &agent.Fake{Reply: func(agent.Request) (string, error) {
+		return sessionAnswer(groups, map[int][]string{1: {"lib/tax.ts"}, 2: {"src/cart.ts"}}), nil
+	}}, t.TempDir(), true
+	out := Run(context.Background(), in)
+
+	levels := map[string]string{}
+	for _, a := range out.Findings {
+		levels[a.Finding.Location.File] = a.Finding.Level
+	}
+	if want := map[string]string{"lib/tax.ts": verify.LevelImportant, "src/cart.ts": verify.LevelNote}; !reflect.DeepEqual(levels, want) {
+		t.Errorf("levels = %v, want the confirmed harm promoted and the other kept as a note", levels)
 	}
 }
