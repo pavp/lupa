@@ -23,11 +23,15 @@ type CredentialSite struct {
 func credentialSites(files []File, patches map[string]string) []CredentialSite {
 	var out []CredentialSite
 	for _, f := range files {
+		find := credentials.Find
+		if IsCode(f.Path) {
+			find = credentials.FindInCode
+		}
 		for _, c := range verify.ChangedLines(patches[f.Path]) {
 			if c.Side != "+" {
 				continue
 			}
-			ms := credentials.Find(c.Text)
+			ms := find(c.Text)
 			if len(ms) == 0 {
 				continue
 			}
