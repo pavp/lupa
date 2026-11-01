@@ -39,6 +39,22 @@ import (
 
 const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--budget <bytes>] [--parallel <n>] [--timeout <duration>] [--plan] [--yes] [--json]\n       lupa skill install\n       lupa doctor\n       lupa --version | --help\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
+// usageOf returns the usage of the command in args, or the whole usage when there is no known command.
+func usageOf(args []string) string {
+	if len(args) > 0 {
+		lines := strings.Split(usage, "\n")
+		for _, l := range lines[:len(lines)-1] {
+			if l = strings.TrimSpace(strings.TrimPrefix(l, "usage:")); strings.HasPrefix(l, "lupa "+args[0]+" ") || l == "lupa "+args[0] {
+				if strings.Contains(l, "<pr>") {
+					l += "\n" + lines[len(lines)-1]
+				}
+				return "usage: " + l
+			}
+		}
+	}
+	return usage
+}
+
 // Env is what a command reads and writes: the working directory, the streams, the agent, which
 // is the claude adapter when nil, and the forge.
 type Env struct {
@@ -92,7 +108,7 @@ func Run(args []string, env Env) int {
 	if err := run(args, env); err != nil {
 		var ue usageError
 		if errors.As(err, &ue) {
-			fmt.Fprintf(env.Stderr, "lupa: %s\n%s\n", ue.msg, usage)
+			fmt.Fprintf(env.Stderr, "lupa: %s\n%s\n", ue.msg, usageOf(args))
 		} else {
 			fmt.Fprintf(env.Stderr, "lupa: %s\n", err)
 		}
@@ -131,7 +147,7 @@ func run(args []string, env Env) error {
 // runSkill handles `lupa skill install`: the agent skill shipped in this binary, for Claude Code and Pi.
 func runSkill(args []string, env Env) error {
 	if len(args) != 1 || args[0] != "install" {
-		return usageError{"usage: lupa skill install"}
+		return usageError{"skill wants the install subcommand"}
 	}
 	home := env.Home
 	if home == "" {
@@ -948,10 +964,22 @@ func planText(p review.Result, target, agentFlags string, hint bool) string {
 			fmt.Fprintf(&b, "  %s: %s\n", e.Path, e.Reason)
 		}
 	}
+	if largest := largestLeftOut(p.Ledger); largest > 0 {
+		fmt.Fprintf(&b, "  Raise --budget to at least %d to review them.\n", largest)
+	}
 	if hint {
 		fmt.Fprintf(&b, "\nRead the change first (recommended): lupa map %s\nThen run the agent review: lupa review %s --yes%s\n", target, target, agentFlags)
 	}
 	return b.String()
+}
+
+// largestLeftOut returns the bytes of the largest hunk the budget left out, or zero.
+func largestLeftOut(ledger []review.Entry) int {
+	largest := 0
+	for _, e := range ledger {
+		largest = max(largest, e.Bytes)
+	}
+	return largest
 }
 
 func plural(n int, one, many string) string {

@@ -671,3 +671,47 @@ func TestReviewPlanTextKeepsTheRunSettings(t *testing.T) {
 		t.Errorf("plan lacks %q:\n%s", want, stdout)
 	}
 }
+
+func TestReviewPlanSaysWhichBudgetReviewsEveryHunk(t *testing.T) {
+	dir, _, _ := newReviewRepo(t)
+	code, stdout, stderr := lupa(dir, "review", "feature", "--plan", "--json", "--budget", "100")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	var p struct {
+		Ledger []struct {
+			Status string `json:"status"`
+			Bytes  int    `json:"bytes"`
+		} `json:"ledger"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &p); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	largest := 0
+	for _, e := range p.Ledger {
+		if e.Status == "not-reviewed" {
+			largest = max(largest, e.Bytes)
+		}
+	}
+	if largest <= 100 {
+		t.Fatalf("ledger = %+v, want not-reviewed hunks with their bytes over the budget", p.Ledger)
+	}
+	_, text, _ := lupa(dir, "review", "feature", "--plan", "--budget", "100")
+	if want := fmt.Sprintf("Raise --budget to at least %d to review them.", largest); !strings.Contains(text, want) {
+		t.Errorf("plan lacks %q:\n%s", want, text)
+	}
+	if _, fits, _ := lupa(dir, "review", "feature", "--plan"); strings.Contains(fits, "Raise --budget") {
+		t.Errorf("plan suggests a budget when every hunk fits:\n%s", fits)
+	}
+}
+
+func TestUsageErrorShowsTheCommandsUsage(t *testing.T) {
+	dir, _, _ := newRepo(t)
+	code, _, stderr := lupa(dir, "review", "feature", "--plan", "--budget", "0")
+	if code != 2 || !strings.Contains(stderr, "usage: lupa review <pr>") || strings.Contains(stderr, "lupa map <pr>") {
+		t.Errorf("exit %d, stderr %q; want the review usage line only", code, stderr)
+	}
+	if !strings.Contains(stderr, "<pr> is a pull request number") {
+		t.Errorf("stderr %q lacks what <pr> means", stderr)
+	}
+}
