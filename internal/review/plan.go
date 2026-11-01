@@ -59,6 +59,8 @@ type Entry struct {
 	Status Status `json:"status"`
 	Reason string `json:"reason,omitempty"`
 	Groups []int  `json:"groups,omitempty"`
+	// Bytes is the size of a hunk left out for exceeding the budget.
+	Bytes int `json:"bytes,omitempty"`
 }
 
 // Estimate is an approximation of the agent runs and tokens the review will spend, not a measurement.
@@ -162,7 +164,7 @@ func split(file, patch string, budget int) (parts []Part, left []Entry) {
 		size := len(head) + len(h)
 		if size > budget {
 			left = append(left, Entry{Path: file, Status: NotReviewed,
-				Reason: fmt.Sprintf("hunk at line %d exceeds the prompt budget (%d bytes > %d)", start, size, budget)})
+				Reason: fmt.Sprintf("hunk at line %d exceeds the prompt budget (%d bytes > %d)", start, size, budget), Bytes: size})
 			continue
 		}
 		if cur == nil || cur.Bytes+len(h) > budget {

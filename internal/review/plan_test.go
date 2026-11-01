@@ -97,7 +97,7 @@ func TestPlan(t *testing.T) {
 			groups:  []string{"1:a/big.go@1,20"},
 			ledger: []Entry{
 				{Path: big, Status: Reviewed, Groups: []int{1}},
-				{Path: big, Status: NotReviewed, Reason: fmt.Sprintf("hunk at line 10 exceeds the prompt budget (%d bytes > 100)", len(bigHeader)+200)},
+				{Path: big, Status: NotReviewed, Reason: fmt.Sprintf("hunk at line 10 exceeds the prompt budget (%d bytes > 100)", len(bigHeader)+200), Bytes: len(bigHeader) + 200},
 			},
 		},
 		{
