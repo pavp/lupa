@@ -18,10 +18,12 @@ import (
 // importers and changed symbols by path, the base-branch conventions, the agent and its run settings, and a reader of
 // any repo file at the head of the change.
 type RunInput struct {
-	Plan        Result
-	Patches     map[string]string
-	Importers   map[string][]string
-	Symbols     map[string][]reach.Symbol
+	Plan      Result
+	Patches   map[string]string
+	Importers map[string][]string
+	Symbols   map[string][]reach.Symbol
+	// Consumers is unchanged code that reads what each changed file's change writes, by changed file.
+	Consumers   map[string][]reach.Snippet
 	Conventions []Convention
 	Agent       agent.Agent
 	Dir         string
@@ -70,6 +72,7 @@ const (
 	UsageAnchor      = "anchor"
 	UsageInvestigate = "investigate"
 	UsageOrchestrate = "orchestrate"
+	UsageContract    = "contract"
 )
 
 // Tally sums the usage of agent calls, including failed ones.
@@ -256,10 +259,19 @@ func reviewOne(ctx context.Context, in RunInput, ag meter, g Group) groupResult 
 		return r
 	}
 	r.uninspected = parsed.Uninspected
+	comments := parsed.Comments
+	// A second pass checks only the unchanged code that consumes the change: one general pass, even with that code
+	// in front of it, did not propose those breaks. Its comments go through the same anchor and investigator.
+	if cp, ok := BuildContractPrompt(PromptInput{Patch: patch, Paths: paths, Consumers: in.Consumers, Conventions: in.Conventions}); ok {
+		if contract, why := reviewGroup(ctx, ag.at(UsageContract), agent.Request{Dir: in.Dir, SystemPrompt: cp.System, Prompt: cp.User, Timeout: in.Timeout, Schema: reviewSchema}, paths); why == "" {
+			comments = append(comments, contract.Comments...)
+			parsed.Dropped = append(parsed.Dropped, contract.Dropped...)
+		}
+	}
 	for _, d := range parsed.Dropped {
 		r.dropped = append(r.dropped, Drop{Stage: StageSchema, Group: g.ID, Reason: d.Reason, Comment: verify.Comment{File: d.File}})
 	}
-	res := Anchor(ctx, AnchorInput{Agent: ag.at(UsageAnchor), Dir: in.Dir, Timeout: in.Timeout, Comments: parsed.Comments, Patches: in.Patches, Head: in.Head})
+	res := Anchor(ctx, AnchorInput{Agent: ag.at(UsageAnchor), Dir: in.Dir, Timeout: in.Timeout, Comments: comments, Patches: in.Patches, Head: in.Head})
 	for _, d := range res.Dropped {
 		r.dropped = append(r.dropped, Drop{Stage: StageAnchor, Group: g.ID, Reason: d.Reason, Comment: d.Comment})
 	}

@@ -853,7 +853,11 @@ func runReview(args []string, env Env) error {
 		}
 	}
 	symbols := m.symbols
-	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate,
+	consumers, err := consumersOf(repo, signals, patches, symbols)
+	if err != nil {
+		return err
+	}
+	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Consumers: consumers, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate,
 		Sentences: sentences, ClaimPatches: claimPatches, Parallel: parallel, Timeout: timeout, Credentials: signals.Credentials,
 		RedactPrompt: fl.redactPrompt})
 	if err != nil {
@@ -1082,6 +1086,42 @@ func symbolsOf(view *headView, patches map[string]string) (map[string][]reach.Sy
 	}
 	for _, sym := range syms {
 		out[sym.File] = append(out[sym.File], sym)
+	}
+	return out, nil
+}
+
+// consumersOf finds, at head, the unchanged TS/JS code that reads what each changed file's change writes.
+func consumersOf(repo git.Repo, signals mapping.Signals, patches map[string]string, symbols map[string][]reach.Symbol) (map[string][]reach.Snippet, error) {
+	provider := typescript.Provider{}
+	owned := map[string]string{}
+	for p, patch := range patches {
+		if provider.Owns(p) {
+			owned[p] = patch
+		}
+	}
+	if len(owned) == 0 {
+		return nil, nil
+	}
+	all, err := repo.Files(signals.Head)
+	if err != nil {
+		return nil, err
+	}
+	blobs, err := repo.Reader(signals.Head)
+	if err != nil {
+		return nil, err
+	}
+	defer blobs.Close()
+	var changed []reach.Symbol
+	for _, list := range symbols {
+		changed = append(changed, list...)
+	}
+	direct := map[string][]string{}
+	for _, f := range signals.Files {
+		direct[f.Path] = f.DirectImporters
+	}
+	out, err := reach.Consumers(reach.ConsumerInput{Files: all, ReadFile: blobs.Read, Patches: owned, Changed: changed, Direct: direct, Owns: provider.Owns})
+	if err != nil {
+		return nil, fmt.Errorf("consumers: %w", err)
 	}
 	return out, nil
 }

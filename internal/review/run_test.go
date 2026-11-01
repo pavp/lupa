@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"regexp"
 	"slices"
@@ -603,5 +604,44 @@ func TestRunChecksTheDescriptionAlongsideTheGroups(t *testing.T) {
 	}
 	if out := Run(context.Background(), f.input(runPlan(Options{}))); out.Claims != nil || f.count(claimsSystem) != 1 {
 		t.Errorf("claims = %+v without sentences, want no claim run", out.Claims)
+	}
+}
+
+func TestRunAddsAContractPassForGroupsWithConsumers(t *testing.T) {
+	plan := runPlan(Options{})
+	var general []string
+	var mu sync.Mutex
+	f := &fakeRun{
+		review: func(prompt string) (string, error) {
+			if strings.Contains(prompt, "Check only whether this change breaks code it does not touch") {
+				if !group(prompt, "lib/tax.ts") || !strings.Contains(prompt, "src/invoice.ts:4-6 (reads rate (line 5))") {
+					return "", fmt.Errorf("contract pass for the wrong group or without its consumers: %s", prompt)
+				}
+				return answer([]string{"lib/tax.ts"}, comment("lib/tax.ts", "severe", "invoice reads a rate no longer written", taxQuote, false)), nil
+			}
+			mu.Lock()
+			general = append(general, prompt)
+			mu.Unlock()
+			if group(prompt, "lib/tax.ts") {
+				return answer([]string{"lib/tax.ts"}), nil
+			}
+			return answer([]string{"src/cart.ts"}), nil
+		},
+	}
+	in := f.input(plan)
+	in.Investigate = false
+	in.Consumers = map[string][]reach.Snippet{"lib/tax.ts": {{File: "src/invoice.ts", Line: 4, End: 6, Why: "reads rate (line 5)", Code: "a\nconst r = t.rate;\nb"}}}
+	out := Run(context.Background(), in)
+
+	if len(out.Findings) != 1 || out.Findings[0].Finding.Comment.Claim != "invoice reads a rate no longer written" {
+		t.Fatalf("findings = %+v, want the contract pass's break", out.Findings)
+	}
+	if out.Usage.Calls != 3 || out.Usage.Stages[UsageContract].Calls != 1 {
+		t.Errorf("calls = %d, contract calls = %d; want 2 reviewers and 1 contract pass, only for the group with consumers", out.Usage.Calls, out.Usage.Stages[UsageContract].Calls)
+	}
+	for _, p := range general {
+		if strings.Contains(p, "LUPA-DATA consumers") {
+			t.Errorf("the general reviewer got the consumers block; only the contract pass should")
+		}
 	}
 }
