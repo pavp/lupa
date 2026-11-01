@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/pavp/lupa/internal/agent"
+	"github.com/pavp/lupa/internal/credentials"
 	"github.com/pavp/lupa/internal/verify"
 )
 
@@ -65,6 +66,9 @@ func orchestrate(ctx context.Context, in RunInput, ag agent.Agent) []orchestrate
 		out[i] = orchestrated{id: g.ID, paths: paths}
 		rel := filepath.Join(filepath.Base(dir), fmt.Sprintf("g%d.txt", g.ID))
 		data := groupData(PromptInput{Patch: patch, Paths: paths, Importers: in.Importers, Symbols: in.Symbols, Conventions: in.Conventions})
+		if in.RedactPrompt {
+			data = credentials.Redact(data)
+		}
 		if err := writeNewFile(filepath.Join(in.Dir, rel), data); err != nil {
 			return notReviewed(out, "writing the group files: "+err.Error())
 		}

@@ -37,7 +37,7 @@ import (
 	"github.com/pavp/lupa/internal/verify"
 )
 
-const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--budget <bytes>] [--parallel <n>] [--timeout <duration>] [--plan] [--yes] [--json]\n       lupa skill install\n       lupa doctor\n       lupa --version | --help\n<pr> is a pull request number (482, #482) or URL, read through gh"
+const usage = "usage: lupa map <pr> | <base>..<head> | <branch> [--json]\n       lupa review <pr> | <base>..<head> | <branch> [--agent claude|pi] [--model <id>] [--effort <level>] [--orchestrate] [--investigate] [--pi-extensions <path,...>] [--budget <bytes>] [--parallel <n>] [--timeout <duration>] [--redact-prompt] [--plan] [--yes] [--json]\n       lupa skill install\n       lupa doctor\n       lupa --version | --help\n<pr> is a pull request number (482, #482) or URL, read through gh"
 
 // usageOf returns the usage of the command in args, or the whole usage when there is no known command.
 func usageOf(args []string) string {
@@ -680,6 +680,7 @@ type reviewFlags struct {
 	agent, model, extensions, effort string
 	budget, parallel, timeout        string
 	orchestrate, investigate         bool
+	redactPrompt                     bool
 }
 
 // agentFlagsOf repeats the flags a review was given, quoted for a shell, so a suggested command runs the same review.
@@ -701,6 +702,9 @@ func agentFlagsOf(r reviewFlags) string {
 	}
 	if r.investigate {
 		b.WriteString(" --investigate")
+	}
+	if r.redactPrompt {
+		b.WriteString(" --redact-prompt")
 	}
 	return b.String()
 }
@@ -761,7 +765,8 @@ func agentOf(name, model, extensions, effort string) (agent.Agent, error) {
 func runReview(args []string, env Env) error {
 	asJSON, planOnly, yes := false, false, false
 	fl := reviewFlags{agent: "claude"}
-	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes, "--orchestrate": &fl.orchestrate, "--investigate": &fl.investigate},
+	target, err := parseArgs(args, map[string]*bool{"--json": &asJSON, "--plan": &planOnly, "--yes": &yes, "--orchestrate": &fl.orchestrate, "--investigate": &fl.investigate,
+		"--redact-prompt": &fl.redactPrompt},
 		map[string]*string{"--agent": &fl.agent, "--model": &fl.model, "--pi-extensions": &fl.extensions, "--effort": &fl.effort,
 			"--budget": &fl.budget, "--parallel": &fl.parallel, "--timeout": &fl.timeout})
 	if err != nil {
@@ -849,7 +854,8 @@ func runReview(args []string, env Env) error {
 	}
 	symbols := m.symbols
 	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate,
-		Sentences: sentences, ClaimPatches: claimPatches, Parallel: parallel, Timeout: timeout, Credentials: signals.Credentials})
+		Sentences: sentences, ClaimPatches: claimPatches, Parallel: parallel, Timeout: timeout, Credentials: signals.Credentials,
+		RedactPrompt: fl.redactPrompt})
 	if err != nil {
 		return err
 	}
@@ -937,6 +943,11 @@ func agentReview(repo git.Repo, head string, in review.RunInput) (out review.Run
 		return out, err
 	}
 	defer blobs.Close()
+	if in.RedactPrompt {
+		if err := redactTree(dir); err != nil {
+			return out, fmt.Errorf("redacting the review worktree: %w", err)
+		}
+	}
 	in.Dir = dir
 	in.Head = func(path string) (string, bool) {
 		b, err := blobs.Read(path)
