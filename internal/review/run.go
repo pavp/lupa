@@ -377,7 +377,44 @@ func dedupe(fs []Anchored) []Anchored {
 		out = append(out, a)
 		i++
 	}
+	return foldContract(out)
+}
+
+// foldContract merges a contract-pass break into a reviewer finding on overlapping lines of the same file: the
+// same defect seen from its consumer, whose harm and wording differ by nature. The higher level survives, the
+// contract's on a tie loses, so a contract survivor still needs an investigator to stay in the main list.
+func foldContract(fs []Anchored) []Anchored {
+	out := slices.Clone(fs)
+	for i := 0; i < len(out); i++ {
+		c := out[i]
+		if c.Source != SourceContract || followUp(c) {
+			continue
+		}
+		j := slices.IndexFunc(out, func(r Anchored) bool {
+			return r.Source != SourceContract && !followUp(r) && overlaps(r.Finding.Location, c.Finding.Location)
+		})
+		if j < 0 {
+			continue
+		}
+		win, lose, label := out[j], c, "consumer"
+		if verify.LevelRank(c.Finding.Level) > verify.LevelRank(out[j].Finding.Level) {
+			win, lose, label = c, out[j], "cause"
+		}
+		win.Finding.Comment.Mechanism += "; " + label + ": " + lose.Finding.Comment.Mechanism
+		win.Finding.Merged += 1 + lose.Finding.Merged
+		win.Also = append(win.Also, lose.Also...)
+		if lose.Finding.Location != win.Finding.Location {
+			win.Also = append(win.Also, lose.Finding.Location)
+		}
+		out[j] = win
+		out = slices.Delete(out, i, i+1)
+		i--
+	}
 	return out
+}
+
+func overlaps(a, b verify.Location) bool {
+	return a.File == b.File && a.Side == b.Side && a.Start <= b.End && b.Start <= a.End
 }
 
 // meter sums the usage of every call it forwards, in total and under its stage, from any number of goroutines.

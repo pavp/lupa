@@ -38,6 +38,9 @@ type dedupeEntry struct {
 // one), keeps its own text, widens its range and counts what it absorbed.
 // Merging repeats until stable, because a widened range can reach a further one. A second pass then
 // merges findings anywhere in the change that are one defect (see sameDefect); also holds, per survivor,
+// LevelRank orders levels from follow-up to blocking; an unknown level ranks lowest.
+func LevelRank(level string) int { return levelRank[level] }
+
 // the locations of the findings it absorbed that way.
 func Dedupe(fs []Finding) (out []Finding, also [][]Location) {
 	if len(fs) == 0 {

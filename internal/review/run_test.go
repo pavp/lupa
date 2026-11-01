@@ -675,3 +675,46 @@ func TestRunKeepsAnUnconfirmedContractBreakOutOfTheMainList(t *testing.T) {
 		t.Errorf("findings = %+v, want the refuted contract break kept as a note with the investigator's reason", out.Findings)
 	}
 }
+
+func TestRunFoldsAContractBreakIntoTheReviewerFindingOnTheSameLines(t *testing.T) {
+	cases := []struct {
+		name, reviewerSeverity string
+		wantSource             string
+	}{
+		{"same level keeps the reviewer's", "severe", ""},
+		{"higher contract level keeps the contract's, still investigated", "warning", SourceContract},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := &fakeRun{review: func(prompt string) (string, error) {
+				if strings.Contains(prompt, "Check only whether this change breaks code it does not touch") {
+					b := comment("lib/tax.ts", "severe", "invoice reads a rate no longer written", taxQuote, false)
+					b["harm"], b["mechanism"] = "failure", "invoice.ts reads t.rate and gets undefined"
+					return answer([]string{"lib/tax.ts"}, b), nil
+				}
+				if group(prompt, "lib/tax.ts") {
+					a := comment("lib/tax.ts", c.reviewerSeverity, "rate is no longer the stored value", taxQuote, false)
+					a["harm"], a["mechanism"] = "wrong_data", "tax multiplies by the imported rate"
+					return answer([]string{"lib/tax.ts"}, a), nil
+				}
+				return answer([]string{"src/cart.ts"}), nil
+			}}
+			in := f.input(runPlan(Options{}))
+			in.Investigate = false
+			in.Consumers = map[string][]reach.Snippet{"lib/tax.ts": {{File: "src/invoice.ts", Line: 4, End: 6, Why: "reads rate (line 5)", Code: "a\nconst r = t.rate;\nb"}}}
+			out := Run(context.Background(), in)
+
+			if len(out.Findings) != 1 {
+				t.Fatalf("findings = %d (%v), want the two folded into one", len(out.Findings), claims(out.Findings))
+			}
+			got := out.Findings[0]
+			if got.Source != c.wantSource || got.Finding.Level != verify.LevelImportant {
+				t.Errorf("source %q level %q, want source %q at important", got.Source, got.Finding.Level, c.wantSource)
+			}
+			m := got.Finding.Comment.Mechanism
+			if !strings.Contains(m, "tax multiplies by the imported rate") || !strings.Contains(m, "invoice.ts reads t.rate and gets undefined") {
+				t.Errorf("mechanism = %q, want both the cause and its consumer's consequence", m)
+			}
+		})
+	}
+}
