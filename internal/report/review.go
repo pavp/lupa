@@ -230,8 +230,12 @@ func writeFinding(b *strings.Builder, n int, a review.Anchored) {
 	for strings.Contains(quote, fence) {
 		fence += "`"
 	}
-	fmt.Fprintf(b, "**%d. %s** (%s)\n\nWhy it matters: %s\n\n%s\n%s\n%s\n\nFix: %s\n\n",
-		n, Redact(c.Claim), strings.Join(tags, " · "), Redact(c.Mechanism), fence, quote, fence, Redact(c.Fix))
+	code := ""
+	if quote != "" {
+		code = fence + "\n" + quote + "\n" + fence + "\n\n"
+	}
+	fmt.Fprintf(b, "**%d. %s** (%s)\n\nWhy it matters: %s\n\n%sFix: %s\n\n",
+		n, Redact(c.Claim), strings.Join(tags, " · "), Redact(c.Mechanism), code, Redact(c.Fix))
 	if len(a.Evidence) > 0 {
 		locs := make([]string, len(a.Evidence))
 		for i, e := range a.Evidence {

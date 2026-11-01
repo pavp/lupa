@@ -296,3 +296,15 @@ func TestReviewListsWhereElseAMergedFindingWasSeen(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewOmitsTheCodeBlockOfAFindingWithoutQuote(t *testing.T) {
+	in := sampleReview()
+	in.Out.Findings[1].Finding.Comment.Quote = ""
+	got := string(Review(in))
+	if strings.Contains(got, "```\n\n```") {
+		t.Errorf("renders an empty code block:\n%s", got)
+	}
+	if !strings.Contains(got, "Why it matters: i starts at 1, so items[0] is never summed\n\nFix: Start the loop at 0") {
+		t.Errorf("finding without quote lost its text:\n%s", got)
+	}
+}

@@ -849,7 +849,7 @@ func runReview(args []string, env Env) error {
 	}
 	symbols := m.symbols
 	out, err := agentReview(repo, signals.Head, review.RunInput{Plan: plan, Patches: patches, Importers: importers, Symbols: symbols, Conventions: conventions, Agent: ag, Orchestrate: orchestrate, Investigate: investigate,
-		Sentences: sentences, ClaimPatches: claimPatches, Parallel: parallel, Timeout: timeout})
+		Sentences: sentences, ClaimPatches: claimPatches, Parallel: parallel, Timeout: timeout, Credentials: signals.Credentials})
 	if err != nil {
 		return err
 	}

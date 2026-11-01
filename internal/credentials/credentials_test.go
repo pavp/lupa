@@ -27,6 +27,10 @@ func TestFind(t *testing.T) {
 		{"a private key block", "-----BEGIN RSA PRIVATE KEY-----\nMIIabc", []Match{{"private-key", High}}},
 		{"a structured key under a credential name is reported once", `api_key = "sk_live_` + strings.Repeat("Ab1", 8) + `"`, []Match{{"stripe-live-key", High}}},
 		{"a password assignment", `password = "hunter2hunter2"`, []Match{{"assigned-secret", Low}}},
+		{"an unquoted password value", "password: hunter2hunter2", []Match{{"assigned-secret", Low}}},
+		{"a value read from the environment is no secret", "export const token = process.env.TOKEN", nil},
+		{"a value read from a config field is no secret", "apiKey: config.stripeApiKey,", nil},
+		{"a value returned by a call is no secret", "password = readPassword(path)", nil},
 		{"a bearer header", "Authorization: Bearer abcdefghijklmnopqrstuv", []Match{{"bearer-token", Low}}},
 		{"a hash is no secret", `etag := "e3b0c44298fc1c149afbf4c8996fb924"`, nil},
 		{"plain code", "for (let i = 1; i < items.length; i++) {", nil},
@@ -38,6 +42,12 @@ func TestFind(t *testing.T) {
 				t.Errorf("Find(%q) = %+v, want %+v", c.in, got, c.want)
 			}
 		})
+	}
+}
+
+func TestRedactKeepsRedactingReferences(t *testing.T) {
+	if got := Redact("token = process.env.TOKEN"); got != "token = ‹redacted›" {
+		t.Errorf("Redact = %q: redaction stays conservative", got)
 	}
 }
 

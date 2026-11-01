@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pavp/lupa/internal/agent"
+	"github.com/pavp/lupa/internal/mapping"
 	"github.com/pavp/lupa/internal/reach"
 	"github.com/pavp/lupa/internal/verify"
 )
@@ -28,6 +29,8 @@ type RunInput struct {
 	Head        func(path string) (string, bool)
 	// Parallel bounds how many groups are reviewed at once; zero means DefaultParallel, below one means one.
 	Parallel int
+	// Credentials are the map's added lines that hold a credential; each becomes a finding without the model.
+	Credentials []mapping.CredentialSite
 	// Sentences of the PR description to check against ClaimPatches, the patches of the files a claim may cite.
 	Sentences    []string
 	ClaimPatches map[string]string
@@ -216,6 +219,7 @@ func Run(ctx context.Context, in RunInput) RunOutput {
 			confirmed = confirmed[1:]
 		}
 	}
+	out.Findings = append(credentialFindings(in.Credentials), out.Findings...)
 	out.Refuted, out.Unconfirmed = inv.Refuted, inv.Unconfirmed
 	out.Claims = claims.Checks
 	out.Notes = append(out.Notes, claims.Notes...)

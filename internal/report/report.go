@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/pavp/lupa/internal/credentials"
 	"github.com/pavp/lupa/internal/mapping"
 )
 
@@ -78,6 +79,17 @@ func Markdown(s mapping.Signals) []byte {
 		}
 		fmt.Fprintf(&b, "- Error detection: %d %s an error: %s%s\n", n, plural(n, "place swallows", "places swallow"), strings.Join(where, ", "), more)
 	}
+	if n := len(s.Credentials); n > 0 {
+		where := make([]string, n)
+		for i, c := range s.Credentials {
+			kind := c.Kind
+			if c.Confidence != credentials.High {
+				kind += ", possible"
+			}
+			where[i] = fmt.Sprintf("`%s` (%s)", at(c.File, c.Line), kind)
+		}
+		fmt.Fprintf(&b, "- Credentials: %d added %s a credential: %s\n", n, plural(n, "line holds", "lines hold"), strings.Join(where, ", "))
+	}
 	if len(s.NotAnalyzed) > 0 {
 		fmt.Fprintf(&b, "- Impact not analyzed for `%s` files: imports and call sites are followed for TS/JS only\n", strings.Join(s.NotAnalyzed, "`, `"))
 	}
@@ -135,6 +147,11 @@ func Markdown(s mapping.Signals) []byte {
 	}
 	for _, u := range s.Unresolved {
 		questions = append(questions, fmt.Sprintf("`%s` imports `%s`, which is not in the repo: is a file missing from this change?", at(u.From, u.Line), u.Specifier))
+	}
+	for _, c := range s.Credentials {
+		if c.Confidence == credentials.High {
+			questions = append(questions, fmt.Sprintf("`%s` adds a credential (%s): has it been rotated?", at(c.File, c.Line), c.Kind))
+		}
 	}
 	for _, e := range s.SilencedErrors[:min(len(s.SilencedErrors), 3)] {
 		questions = append(questions, fmt.Sprintf("`%s` swallows an error: is that intended, and how would a failure show up?", at(e.File, e.Line)))

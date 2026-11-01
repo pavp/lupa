@@ -754,3 +754,51 @@ func TestReviewRunMergesOneDefectSeenFromTwoFiles(t *testing.T) {
 		t.Errorf("locations = %v, want a.txt and b.go", got)
 	}
 }
+
+func TestReviewRunReportsCredentialsWithoutTheModel(t *testing.T) {
+	t.Setenv("TMPDIR", t.TempDir())
+	token := "ghp_" + strings.Repeat("A1", 18)
+	dir := t.TempDir()
+	gitCmd(t, dir, "init", "-q", "-b", "main")
+	write(t, dir, "a.txt", "one\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "base")
+	gitCmd(t, dir, "switch", "-q", "-c", "feature")
+	if err := os.MkdirAll(filepath.Join(dir, "fixtures"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, dir, "fixtures/user.json", "{\"token\": \""+token+"\"}\n")
+	write(t, dir, "config.go", "package config\n\nvar password = \"hunter2hunter2\"\n")
+	gitCmd(t, dir, "add", ".")
+	gitCmd(t, dir, "commit", "-q", "-m", "change")
+	gitCmd(t, dir, "switch", "-q", "main")
+	ag := &agent.Fake{Reply: func(req agent.Request) (string, error) {
+		m := groupPaths.FindStringSubmatch(req.Prompt)
+		if m == nil {
+			return "", fmt.Errorf("unexpected request")
+		}
+		return `{"files_inspected": ` + m[1] + `, "comments": []}`, nil
+	}}
+	code, stdout, stderr := lupaRun(dir, "", ag, "review", "feature", "--yes", "--json")
+	if code != 0 {
+		t.Fatalf("exit %d, stderr %q", code, stderr)
+	}
+	if strings.Contains(stdout, token) || strings.Contains(stdout, "hunter2") {
+		t.Errorf("the review JSON carries a credential's value")
+	}
+	var r reviewOut
+	if err := json.Unmarshal([]byte(stdout), &r); err != nil {
+		t.Fatalf("not JSON: %v\n%s", err, stdout)
+	}
+	got := map[string]string{}
+	for _, f := range r.Findings {
+		got[fmt.Sprintf("%s:%d", f.File, f.Start)] = f.Level + " " + f.Harm + " " + f.Causality
+	}
+	want := map[string]string{
+		"fixtures/user.json:1": "blocking security introduced",
+		"config.go:3":          "important security introduced",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("findings = %v, want %v", got, want)
+	}
+}

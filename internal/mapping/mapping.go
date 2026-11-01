@@ -119,6 +119,8 @@ type Signals struct {
 	RemovedExports []RemovedExport `json:"removed_exports,omitempty"`
 	// SilencedErrors are added lines that swallow an error.
 	SilencedErrors []Site `json:"silenced_errors"`
+	// Credentials are added lines that hold a credential, without its value.
+	Credentials []CredentialSite `json:"credentials"`
 	// NotAnalyzed lists the extensions of changed code files whose imports and calls reach does not follow.
 	NotAnalyzed []string `json:"not_analyzed,omitempty"`
 
@@ -272,6 +274,9 @@ func Build(in Input) Signals {
 			s.Claims = []Claim{}
 		}
 	}
+	if s.Credentials = credentialSites(s.Files, in.Patches); s.Credentials == nil {
+		s.Credentials = []CredentialSite{}
+	}
 	s.ReviewNow = gate(s, in.PR)
 	s.SilencedErrors = silencedErrors(s.Files, in.Patches)
 	if s.SilencedErrors == nil {
@@ -281,9 +286,12 @@ func Build(in Input) Signals {
 	return s
 }
 
-// gate decides review now or hand back; the first rule that matches wins: a possible duplicate,
-// the size, then a missing purpose. The PR rules apply only to a pull request.
+// gate decides review now or hand back; the first rule that matches wins: a live credential, a possible
+// duplicate, the size, then a missing purpose. The PR rules apply only to a pull request.
 func gate(s Signals, pr *PR) Gate {
+	if g, ok := liveCredentials(s.Credentials); ok {
+		return g
+	}
 	if pr != nil {
 		if g, ok := duplicate(s.Files, pr); ok {
 			return g
