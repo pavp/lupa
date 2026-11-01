@@ -317,11 +317,12 @@ func dedupe(fs []Anchored) []Anchored {
 	}
 	var out []Anchored
 	i := 0
-	for _, f := range verify.Dedupe(plain) {
+	survivors, also := verify.Dedupe(plain)
+	for k, f := range survivors {
 		for i < len(fs) && fs[i].Finding.Comment != f.Comment {
 			i++
 		}
-		a := Anchored{Finding: f}
+		a := Anchored{Finding: f, Also: also[k]}
 		if i < len(fs) {
 			a.Relocated, a.validation = fs[i].Relocated, fs[i].validation
 		}

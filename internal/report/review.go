@@ -69,7 +69,7 @@ func Review(in ReviewInput) []byte {
 		for _, level := range []string{verify.LevelNote, verify.LevelFollowUp} {
 			for _, a := range out.Findings {
 				if f := a.Finding; f.Level == level {
-					fmt.Fprintf(&b, "- %s · `%s` · %s: %s", f.Level, span(f.Location), f.Causality, Redact(f.Comment.Claim))
+					fmt.Fprintf(&b, "- %s · %s · %s: %s", f.Level, where(a), f.Causality, Redact(f.Comment.Claim))
 					if a.Held != "" {
 						fmt.Fprintf(&b, " — not promoted: %s", Redact(a.Held))
 					}
@@ -218,7 +218,7 @@ func claimOutcome(c review.ClaimCheck) string {
 
 func writeFinding(b *strings.Builder, n int, a review.Anchored) {
 	f, c := a.Finding, a.Finding.Comment
-	tags := []string{"`" + span(f.Location) + "`", f.Causality}
+	tags := []string{where(a), f.Causality}
 	if a.Relocated {
 		tags = append(tags, "relocated")
 	}
@@ -245,6 +245,19 @@ func writeFinding(b *strings.Builder, n int, a review.Anchored) {
 }
 
 // span formats a location as file:start, or file:start-end when it covers several lines.
+// where renders a finding's location and, for a defect merged from several places, the others.
+func where(a review.Anchored) string {
+	s := "`" + span(a.Finding.Location) + "`"
+	if len(a.Also) == 0 {
+		return s
+	}
+	others := make([]string, len(a.Also))
+	for i, l := range a.Also {
+		others[i] = "`" + span(l) + "`"
+	}
+	return s + " (also " + strings.Join(others, ", ") + ")"
+}
+
 func span(l verify.Location) string {
 	if l.End > l.Start {
 		return fmt.Sprintf("%s:%d-%d", l.File, l.Start, l.End)
