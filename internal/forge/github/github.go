@@ -71,6 +71,7 @@ type PR struct {
 	Ref          Ref
 	Title, Body  string
 	BaseRef      string
+	BaseSHA      string
 	HeadRef      string
 	HeadSHA      string
 	LinkedIssues int
@@ -83,7 +84,7 @@ type Client struct {
 	Bin string
 }
 
-const prFields = "number,url,title,body,baseRefName,headRefName,headRefOid,closingIssuesReferences,files"
+const prFields = "number,url,title,body,baseRefName,baseRefOid,headRefName,headRefOid,closingIssuesReferences,files"
 
 // PR reads ref, running gh in dir so a bare number resolves against that clone's repo.
 func (c Client) PR(dir string, ref Ref) (PR, error) {
@@ -100,6 +101,7 @@ func (c Client) PR(dir string, ref Ref) (PR, error) {
 		Title       string `json:"title"`
 		Body        string `json:"body"`
 		BaseRefName string `json:"baseRefName"`
+		BaseRefOid  string `json:"baseRefOid"`
 		HeadRefName string `json:"headRefName"`
 		HeadRefOid  string `json:"headRefOid"`
 		Closing     []any  `json:"closingIssuesReferences"`
@@ -114,7 +116,7 @@ func (c Client) PR(dir string, ref Ref) (PR, error) {
 	if !ok || raw.HeadRefOid == "" || raw.BaseRefName == "" {
 		return PR{}, fmt.Errorf("gh pr view %s: answer lacks the url, base or head", arg)
 	}
-	pr := PR{Ref: got, Title: raw.Title, Body: raw.Body, BaseRef: raw.BaseRefName, HeadRef: raw.HeadRefName, HeadSHA: raw.HeadRefOid, LinkedIssues: len(raw.Closing)}
+	pr := PR{Ref: got, Title: raw.Title, Body: raw.Body, BaseRef: raw.BaseRefName, BaseSHA: raw.BaseRefOid, HeadRef: raw.HeadRefName, HeadSHA: raw.HeadRefOid, LinkedIssues: len(raw.Closing)}
 	for _, f := range raw.Files {
 		pr.Files = append(pr.Files, f.Path)
 	}

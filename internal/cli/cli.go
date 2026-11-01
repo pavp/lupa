@@ -1153,13 +1153,17 @@ func cacheClone(env Env, ref github.Ref) (git.Repo, error) {
 	return repo, repo.Check()
 }
 
-// fetchPR fetches the PR's head and base branch into refs/lupa/pr/<n>/ from remote, without touching
+// fetchPR fetches the PR's head and base branch (its base commit when the branch is gone) into refs/lupa/pr/<n>/ from remote, without touching
 // any checkout, and returns their merge-base and the head, as the PR shows them. In a blobless clone
 // the head's file contents are brought in at once, since the map reads every file at head.
 func fetchPR(repo git.Repo, remote string, pr github.PR) (base, head string, err error) {
 	refs := fmt.Sprintf("refs/lupa/pr/%d/", pr.Ref.Number)
-	if err := repo.Fetch(remote, fmt.Sprintf("+refs/pull/%d/head:%shead", pr.Ref.Number, refs), "+refs/heads/"+pr.BaseRef+":"+refs+"base"); err != nil {
-		return "", "", err
+	headSpec := fmt.Sprintf("+refs/pull/%d/head:%shead", pr.Ref.Number, refs)
+	if err := repo.Fetch(remote, headSpec, "+refs/heads/"+pr.BaseRef+":"+refs+"base"); err != nil {
+		// A stacked PR's base branch may be gone after its parent merged; GitHub still serves the base commit by SHA.
+		if pr.BaseSHA == "" || repo.Fetch(remote, headSpec, "+"+pr.BaseSHA+":"+refs+"base") != nil {
+			return "", "", err
+		}
 	}
 	if head, err = repo.Commit(refs + "head"); err != nil {
 		return "", "", err
