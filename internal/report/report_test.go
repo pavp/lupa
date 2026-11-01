@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/pavp/lupa/internal/credentials"
 	"github.com/pavp/lupa/internal/mapping"
 )
 
@@ -125,5 +126,25 @@ func TestDottedSpanNotFoundAsWritten(t *testing.T) {
 	got := string(Markdown(mapping.Signals{Claims: []mapping.Claim{{Text: "Moves `review_now.reply`", Cites: []mapping.Cite{{Text: "review_now.reply"}}}}}))
 	if want := "`review_now.reply` not found as written"; !strings.Contains(got, want) {
 		t.Errorf("report lacks %q:\n%s", want, got)
+	}
+}
+
+func TestMarkdownListsCredentials(t *testing.T) {
+	s := mapping.Build(sample())
+	s.Credentials = []mapping.CredentialSite{
+		{File: "fixtures/user.json", Line: 2, Kind: "github-token", Confidence: credentials.High},
+		{File: "src/config.ts", Line: 7, Kind: "assigned-secret", Confidence: credentials.Low},
+	}
+	got := string(Markdown(s))
+	for _, want := range []string{
+		"- Credentials: 2 added lines hold a credential: `fixtures/user.json:2` (github-token), `src/config.ts:7` (assigned-secret, possible)",
+		"`fixtures/user.json:2` adds a credential (github-token): has it been rotated?",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "`src/config.ts:7` adds a credential") {
+		t.Errorf("asks to rotate a possible secret")
 	}
 }

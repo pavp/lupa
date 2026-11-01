@@ -2,7 +2,10 @@
 // reader that only redacts can take every match while one that reports a finding can tell them apart.
 package credentials
 
-import "regexp"
+import (
+	"regexp"
+	"strings"
+)
 
 // Confidence is how sure a match is to be a real credential.
 type Confidence string
@@ -66,7 +69,7 @@ func Find(s string) []Match {
 				continue
 			}
 			taken = append(taken, [2]int{start, m[1]})
-			if p.confidence == none {
+			if p.confidence == none || p.keep && reference(s, m) {
 				continue
 			}
 			c := p.confidence
@@ -77,6 +80,20 @@ func Find(s string) []Match {
 		}
 	}
 	return out
+}
+
+// referenceValue is an unquoted value that names where a credential comes from instead of holding it:
+// process.env.TOKEN, config.apiKey, readPassword(path).
+var referenceValue = regexp.MustCompile(`^[A-Za-z_$][\w$]*(?:\.[\w$]|\()`)
+
+// reference reports a name-based match whose value is an unquoted reference, which Find does not report;
+// Redact still replaces it, since redaction stays cheap to get wrong.
+func reference(s string, m []int) bool {
+	prefix := s[m[2]:m[3]]
+	if strings.HasSuffix(prefix, `"`) || strings.HasSuffix(prefix, "'") {
+		return false
+	}
+	return referenceValue.MatchString(s[m[3]:m[1]])
 }
 
 // continues reports a letter or digit at i, where a match ended inside a longer value.
